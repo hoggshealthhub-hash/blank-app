@@ -269,7 +269,7 @@ def generate_recording_report(data: dict) -> BytesIO:
         y = ensure(y, SH + 40)
         y = sec(c, y, "Behaviours identified by carers", TEAL)
         for b in behaviours:
-            freq  = b.get("frequency", 0)
+            freq  = b.get("frequency") or 0
             pct   = f"{round(freq / total * 100)}%" if total else ""
             label = b.get("label", "Behaviour")
             desc  = b.get("carer_description", "")
@@ -1638,7 +1638,7 @@ with tab1:
             st.markdown("##### Behaviours identified")
             t = rec_data.get("total_incidents") or sum((b.get("frequency") or 0) for b in behs) or 1
             for b in behs:
-                freq = b.get("frequency", 0)
+                freq = b.get("frequency") or 0
                 pct  = round(freq / t * 100) if t else 0
                 with st.expander(f"**{b.get('label', 'Behaviour')}** — {freq} incidents ({pct}%)"):
                     if b.get("carer_description"):
