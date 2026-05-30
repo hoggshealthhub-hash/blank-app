@@ -1765,23 +1765,49 @@ def create_fba_docx(fba: dict, client_name: str,
         except: return doc.add_paragraph(f"• {text}")
 
     def score_table(rows_data, col_headers=None):
-        n_cols = len(rows_data[0]) if rows_data else 2
-        t = doc.add_table(rows=len(rows_data), cols=n_cols)
-        t.style = 'Table Grid'
-        for i, row in enumerate(rows_data):
-            for j, cell_val in enumerate(row):
-                t.rows[i].cells[j].text = str(cell_val) if cell_val else ""
-                if i == 0 and t.rows[i].cells[j].paragraphs[0].runs:
-                    t.rows[i].cells[j].paragraphs[0].runs[0].bold = True
-        doc.add_paragraph("")
-        return t
+        try:
+            if not rows_data: return None
+            rows_data = [list(r) for r in rows_data if r]
+            if not rows_data: return None
+            n_cols = max(len(r) for r in rows_data)
+            t = doc.add_table(rows=len(rows_data), cols=n_cols)
+            t.style = 'Table Grid'
+            for i, row in enumerate(rows_data):
+                padded = list(row) + [""] * (n_cols - len(row))
+                cells = t.rows[i].cells
+                for j in range(n_cols):
+                    if j >= len(cells): break
+                    val = padded[j]
+                    cells[j].text = "" if val is None else str(val)
+                    if i == 0:
+                        try:
+                            if cells[j].paragraphs[0].runs:
+                                cells[j].paragraphs[0].runs[0].bold = True
+                        except Exception:
+                            pass
+            doc.add_paragraph("")
+            return t
+        except Exception:
+            doc.add_paragraph("[table could not be rendered — see source]", style=None)
+            return None
 
     def narrative_block(text):
         if not text: return
+        if not isinstance(text, str):
+            text = str(text)
         for para in text.split('\n'):
             para = para.strip()
             if para:
                 body(para)
+
+    def safe_section(fn, label="section"):
+        try:
+            fn()
+        except Exception as e:
+            p = doc.add_paragraph()
+            r = p.add_run(f"[Error rendering {label}: {e} — please review source data]")
+            r.italic = True; r.font.color.rgb = REDC
+            r.font.size = Pt(9)
 
     # ── Cover ──────────────────────────────────────────────────────────────────
     title = doc.add_heading("Section 8: Functional Behaviour Assessment", 0)
@@ -1823,11 +1849,16 @@ def create_fba_docx(fba: dict, client_name: str,
 
     # ── Assessment Results ─────────────────────────────────────────────────────
     h1("Assessment Results")
-    results = fba.get("results", {})
+    results = fba.get("results", {}) or {}
 
-    # EDA-Q
-    edaq = results.get("edaq", {})
-    if edaq.get("present"):
+    def note_error(label, exc):
+        p = doc.add_paragraph()
+        r = p.add_run(f"[Could not fully render {label} — {exc}. Review source PDF and try again.]")
+        r.italic = True; r.font.color.rgb = REDC; r.font.size = Pt(9)
+
+    def render_edaq():
+        edaq = results.get("edaq") or {}
+        if not edaq.get("present"): return
         h2("Extreme Demand Avoidance Questionnaire (EDA-Q)")
         body(
             "The EDA-Q consists of 26 questions aimed to measure the presence of "
@@ -1837,17 +1868,17 @@ def create_fba_docx(fba: dict, client_name: str,
         )
         doc.add_paragraph("")
         score_table([
-            [f"{client_name}'s EDA-Q Results"],
-            ["Total score", edaq.get("total_score", "[SCORE]")],
-            ["Threshold note", edaq.get("threshold_note", "")],
-            ["Completed by", edaq.get("completed_by", "[VERIFY]")],
+            [f"{client_name}'s EDA-Q Results", ""],
+            ["Total score",     edaq.get("total_score",     "[SCORE]")],
+            ["Threshold note",  edaq.get("threshold_note",  "")],
+            ["Completed by",    edaq.get("completed_by",    "[VERIFY]")],
         ])
         narrative_block(edaq.get("narrative", ""))
         doc.add_paragraph("")
 
-    # QABF
-    qabf = results.get("qabf", {})
-    if qabf.get("present"):
+    def render_qabf():
+        qabf = results.get("qabf") or {}
+        if not qabf.get("present"): return
         h2("Questions About Behavioural Function (QABF)")
         body(
             "The QABF is completed by members of a person's support network to assess "
@@ -1855,26 +1886,27 @@ def create_fba_docx(fba: dict, client_name: str,
             "of 25 questions and is completed for each individual behaviour being assessed."
         )
         doc.add_paragraph("")
-        for beh in qabf.get("behaviours", []):
+        for beh in (qabf.get("behaviours") or []):
+            if not isinstance(beh, dict): continue
             h2(f"{client_name}'s Results from the QABF")
             if beh.get("behaviour_name"):
                 body(f"Assessed presentation: {beh['behaviour_name']}", italic=True)
-            scores = beh.get("scores", {})
+            scores = beh.get("scores") or {}
             score_table([
-                ["Category", "Score"],
-                ["Attention",   scores.get("attention",   "[VERIFY]")],
-                ["Escape",      scores.get("escape",      "[VERIFY]")],
-                ["Non-social",  scores.get("non_social",  "[VERIFY]")],
-                ["Physical",    scores.get("physical",    "[VERIFY]")],
-                ["Tangible",    scores.get("tangible",    "[VERIFY]")],
-                ["Completed by", beh.get("completed_by", "[VERIFY]"), ""],
+                ["Category",     "Score"],
+                ["Attention",    scores.get("attention",   "[VERIFY]")],
+                ["Escape",       scores.get("escape",      "[VERIFY]")],
+                ["Non-social",   scores.get("non_social",  "[VERIFY]")],
+                ["Physical",     scores.get("physical",    "[VERIFY]")],
+                ["Tangible",     scores.get("tangible",    "[VERIFY]")],
+                ["Completed by", beh.get("completed_by",   "[VERIFY]")],
             ])
             narrative_block(beh.get("narrative", ""))
             doc.add_paragraph("")
 
-    # Sensory Profile 2.0
-    sp = results.get("sensory_profile", {})
-    if sp.get("present"):
+    def render_sp():
+        sp = results.get("sensory_profile") or {}
+        if not sp.get("present"): return
         h2("Sensory Profile 2.0")
         body(
             "The Sensory Profile 2.0 is a comprehensive caregiver questionnaire which "
@@ -1885,46 +1917,42 @@ def create_fba_docx(fba: dict, client_name: str,
         h2(f"{client_name}'s Results from the Sensory Profile 2.0")
         if sp.get("completed_by"):
             body(f"Completed by {sp['completed_by']}.", italic=True)
-        proc = sp.get("processing", {})
-        if proc:
+        sp_cols = ["Much less than others", "Less than others", "Just like others",
+                   "More than others", "Much more than others"]
+        proc = sp.get("processing") or {}
+        if isinstance(proc, dict) and proc:
             score_table([
-                ["Sensory Profile 2.0 Score Summary – Processing",
-                 "Much less than others", "Less than others", "Just like others",
-                 "More than others", "Much more than others"],
-                _sp_row("Seeking/Seeker",      proc.get("seeking",      "")),
-                _sp_row("Avoiding/Avoider",    proc.get("avoiding",     "")),
-                _sp_row("Sensitivity/Sensor",  proc.get("sensitivity",  "")),
-                _sp_row("Registration/Bystander", proc.get("registration", "")),
+                ["Sensory Profile 2.0 Score Summary – Processing"] + sp_cols,
+                _sp_row("Seeking/Seeker",         proc.get("seeking",      "") or ""),
+                _sp_row("Avoiding/Avoider",       proc.get("avoiding",     "") or ""),
+                _sp_row("Sensitivity/Sensor",     proc.get("sensitivity",  "") or ""),
+                _sp_row("Registration/Bystander", proc.get("registration", "") or ""),
             ])
-        sens = sp.get("sensory", {})
-        if sens:
+        sens = sp.get("sensory") or {}
+        if isinstance(sens, dict) and sens:
             score_table([
-                ["Sensory Profile 2.0 Score Summary – Sensory",
-                 "Much less than others", "Less than others", "Just like others",
-                 "More than others", "Much more than others"],
-                _sp_row("Auditory Processing",       sens.get("auditory",      "")),
-                _sp_row("Visual Processing",         sens.get("visual",        "")),
-                _sp_row("Touch Processing",          sens.get("touch",         "")),
-                _sp_row("Movement Processing",       sens.get("movement",      "")),
-                _sp_row("Body Position Processing",  sens.get("body_position", "")),
-                _sp_row("Oral Sensory Processing",   sens.get("oral",          "")),
+                ["Sensory Profile 2.0 Score Summary – Sensory"] + sp_cols,
+                _sp_row("Auditory Processing",      sens.get("auditory",      "") or ""),
+                _sp_row("Visual Processing",        sens.get("visual",        "") or ""),
+                _sp_row("Touch Processing",         sens.get("touch",         "") or ""),
+                _sp_row("Movement Processing",      sens.get("movement",      "") or ""),
+                _sp_row("Body Position Processing", sens.get("body_position", "") or ""),
+                _sp_row("Oral Sensory Processing",  sens.get("oral",          "") or ""),
             ])
-        beh_scores = sp.get("behaviour_scores", {})
-        if beh_scores:
+        beh_scores = sp.get("behaviour_scores") or {}
+        if isinstance(beh_scores, dict) and beh_scores:
             score_table([
-                ["Sensory Profile 2.0 Score Summary – Behaviour",
-                 "Much less than others", "Less than others", "Just like others",
-                 "More than others", "Much more than others"],
-                _sp_row("Conduct",                 beh_scores.get("conduct",         "")),
-                _sp_row("Social Emotional Responses", beh_scores.get("social_emotional", "")),
-                _sp_row("Attentional Responses",   beh_scores.get("attentional",     "")),
+                ["Sensory Profile 2.0 Score Summary – Behaviour"] + sp_cols,
+                _sp_row("Conduct",                    beh_scores.get("conduct",          "") or ""),
+                _sp_row("Social Emotional Responses", beh_scores.get("social_emotional", "") or ""),
+                _sp_row("Attentional Responses",      beh_scores.get("attentional",      "") or ""),
             ])
         narrative_block(sp.get("narrative", ""))
         doc.add_paragraph("")
 
-    # FAST
-    fast = results.get("fast", {})
-    if fast.get("present"):
+    def render_fast():
+        fast = results.get("fast") or {}
+        if not fast.get("present"): return
         h2("Functional Analysis Screening Tool (FAST)")
         body(
             "The FAST is a 16-item questionnaire that can be completed by anyone who "
@@ -1934,7 +1962,7 @@ def create_fba_docx(fba: dict, client_name: str,
         )
         doc.add_paragraph("")
         h2(f"{client_name}'s Results from the FAST")
-        scores = fast.get("scores", {})
+        scores = fast.get("scores") or {}
         score_table([
             ["FAST Category", "Impact on Behaviour"],
             ["Social (need for connection and/or intellectual stimulation)",
@@ -1950,9 +1978,9 @@ def create_fba_docx(fba: dict, client_name: str,
         narrative_block(fast.get("narrative", ""))
         doc.add_paragraph("")
 
-    # TMQ
-    tmq = results.get("tmq", {})
-    if tmq.get("present"):
+    def render_tmq():
+        tmq = results.get("tmq") or {}
+        if not tmq.get("present"): return
         h2("The Monotropism Questionnaire (TMQ)")
         body(
             "The Monotropism Questionnaire is a questionnaire developed by autistic "
@@ -1962,75 +1990,80 @@ def create_fba_docx(fba: dict, client_name: str,
         )
         doc.add_paragraph("")
         h2(f"{client_name}'s Results from the TMQ")
-        factors = tmq.get("factors", {})
+        factors = tmq.get("factors") or {}
         score_table([
             ["TMQ Factor", "Presentation of Factor"],
-            ["Special Interests",
-             factors.get("special_interests",   "[VERIFY]")],
-            ["Rumination and anxiety",
-             factors.get("rumination_anxiety",  "[VERIFY]")],
-            ["Need for routines",
-             factors.get("need_for_routines",   "[VERIFY]")],
-            ["Environmental impact on the attention tunnel",
-             factors.get("environmental_impact","[VERIFY]")],
-            ["Losing track of other factors when focusing on special interests",
-             factors.get("losing_track",        "[VERIFY]")],
-            ["Struggle with decision-making",
-             factors.get("decision_making",     "[VERIFY]")],
-            ["Anxiety-reducing effect of special interests",
-             factors.get("anxiety_reducing",    "[VERIFY]")],
-            ["Managing social interactions",
-             factors.get("social_interactions", "[VERIFY]")],
-            ["Overall Average",
-             factors.get("overall_average",     "[VERIFY]")],
-            ["Completed by", tmq.get("completed_by", "[VERIFY]")],
+            ["Special Interests",                                                 factors.get("special_interests",   "[VERIFY]")],
+            ["Rumination and anxiety",                                            factors.get("rumination_anxiety",  "[VERIFY]")],
+            ["Need for routines",                                                 factors.get("need_for_routines",   "[VERIFY]")],
+            ["Environmental impact on the attention tunnel",                      factors.get("environmental_impact","[VERIFY]")],
+            ["Losing track of other factors when focusing on special interests",  factors.get("losing_track",        "[VERIFY]")],
+            ["Struggle with decision-making",                                     factors.get("decision_making",     "[VERIFY]")],
+            ["Anxiety-reducing effect of special interests",                      factors.get("anxiety_reducing",    "[VERIFY]")],
+            ["Managing social interactions",                                      factors.get("social_interactions", "[VERIFY]")],
+            ["Overall Average",                                                   factors.get("overall_average",     "[VERIFY]")],
+            ["Completed by",                                                       tmq.get("completed_by",            "[VERIFY]")],
         ])
         narrative_block(tmq.get("narrative", ""))
         doc.add_paragraph("")
 
-    # ABAS (optional)
-    abas = results.get("abas", {})
-    if abas.get("present"):
+    def render_abas():
+        abas = results.get("abas") or {}
+        if not abas.get("present"): return
         h2("Adaptive Behaviour Assessment System (ABAS)")
-        domain_scores = abas.get("domain_scores", {})
-        if domain_scores:
+        domain_scores = abas.get("domain_scores") or {}
+        if isinstance(domain_scores, dict) and domain_scores:
             rows = [["Domain", "Score"]]
             for k, v in domain_scores.items():
-                rows.append([k, str(v)])
+                rows.append([str(k), str(v) if v is not None else ""])
             score_table(rows)
         if abas.get("completed_by"):
             body(f"Completed by {abas['completed_by']}.", italic=True)
         narrative_block(abas.get("narrative", ""))
         doc.add_paragraph("")
 
-    # ABC data (optional)
-    abc = results.get("abc_data", {})
-    if abc.get("present"):
+    def render_abc():
+        abc = results.get("abc_data") or {}
+        if not abc.get("present"): return
         h2("ABC Recording Data")
         if abc.get("summary"):
             body(abc["summary"], italic=True)
         narrative_block(abc.get("narrative", ""))
         doc.add_paragraph("")
 
+    for label, fn in [
+        ("EDA-Q",               render_edaq),
+        ("QABF",                render_qabf),
+        ("Sensory Profile 2.0", render_sp),
+        ("FAST",                render_fast),
+        ("TMQ",                 render_tmq),
+        ("ABAS",                render_abas),
+        ("ABC Recording",       render_abc),
+    ]:
+        try:
+            fn()
+        except Exception as e:
+            note_error(label, e)
+
     # ── Function of Presentation ───────────────────────────────────────────────
     doc.add_page_break()
     h1("Function of Presentation")
-    fop = fba.get("function_of_presentation", {})
-
-    if fop.get("behaviour_description"):
-        body("Behaviour Description:", italic=False)
-        narrative_block(fop["behaviour_description"])
-        doc.add_paragraph("")
-
-    if fop.get("relevant_evidence"):
-        body("Relevant Evidence:", italic=False)
-        narrative_block(fop["relevant_evidence"])
-        doc.add_paragraph("")
-
-    if fop.get("summary_statement"):
-        body("Summary Statement:", italic=False)
-        narrative_block(fop["summary_statement"])
-        doc.add_paragraph("")
+    try:
+        fop = fba.get("function_of_presentation") or {}
+        if fop.get("behaviour_description"):
+            body("Behaviour Description:", italic=False)
+            narrative_block(fop["behaviour_description"])
+            doc.add_paragraph("")
+        if fop.get("relevant_evidence"):
+            body("Relevant Evidence:", italic=False)
+            narrative_block(fop["relevant_evidence"])
+            doc.add_paragraph("")
+        if fop.get("summary_statement"):
+            body("Summary Statement:", italic=False)
+            narrative_block(fop["summary_statement"])
+            doc.add_paragraph("")
+    except Exception as e:
+        note_error("Function of Presentation", e)
 
     # Footer
     doc.add_paragraph("")
