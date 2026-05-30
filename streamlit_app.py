@@ -9,7 +9,7 @@ from datetime import date
 import streamlit as st
 import anthropic
 from io import BytesIO
-from docx import Document as DocxDocument
+from docx import Document as DocxDocumen
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas as rl_canvas
