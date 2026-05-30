@@ -1,10 +1,12 @@
 """
 PBS Support Tool
-Tab 1: Upload a PBSP → Support Reference Card + ABC Recording Form.
-Tab 2: Enter client behaviours → AI strategy recommendations + PDF report.
+Tab 1: üìä Behaviour Recording ‚Äî upload 30-day recording ‚Üí extract behaviours, patterns & triggers.
+Tab 2: üìÑ Generate from PBSP ‚Äî upload PBSP ‚Üí Support Reference Card + ABC Recording Form.
+Tab 3: üß† Strategy Recommender ‚Äî behaviours ‚Üí AI strategy recommendations + PDF report.
 """
 
 import json
+import os
 from datetime import date
 import streamlit as st
 import anthropic
@@ -16,7 +18,13 @@ from reportlab.pdfgen import canvas as rl_canvas
 from reportlab.lib.colors import HexColor, white
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
-st.set_page_config(page_title="PBS Support Tool", page_icon="📋", layout="centered")
+try:
+    import openpyxl
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
+
+st.set_page_config(page_title="PBS Support Tool", page_icon="üìã", layout="centered")
 
 DEEP_BLUE  = HexColor('#0D4F6E')
 TEAL       = HexColor('#1A9B8A')
@@ -37,105 +45,10 @@ W, H = A4
 LM, RM = 20, 20
 CW = W - LM - RM
 
-# ── Embedded strategy library ──────────────────────────────────────────────────
-EMBEDDED_LIBRARY = """Hoggs Health Hub PBS Strategy Library — Neuro-Affirming, Trauma-Informed, Rights-Based, NDIS-Aligned
 
-S01 Functional Behaviour Assessment FBA: Tier 1 Established Evidence. All populations. The systematic multi-method process of understanding why a behaviour occurs. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Elopement, Verbal Aggression, Task Refusal, Emotional Dysregulation, Stereotypy, PICA, Disruptive Behaviour. Functions: All. Step 1: File review including previous assessments, medical history, therapy reports. Step 2: Structured stakeholder interviews using FAI or open clinical interviewing including the person. Step 3: Operationally define behaviour in observable measurable terms. Step 4: Collect ABC data across multiple environments, times, and people. Step 5: Identify antecedent patterns, consequence patterns, and setting events. Step 6: Develop hypothesis: When antecedent/context, person does behaviour, which results in function. Step 7: Share hypothesis with person and family. Step 8: Use FBA to directly drive every strategy in BSP.
-
-S02 Functional Communication Training FCT: Tier 1 Established Evidence. All populations. Teaches a person to communicate the same message as their behaviour using a more effective accessible form. Communication rights framework. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Verbal Aggression, Elopement, Task Refusal, Emotional Dysregulation, Disruptive Behaviour. Functions: Escape/Avoidance, Attention, Access to Tangibles, Automatic/Sensory. Step 1: Confirm function via FBA — replacement communication must serve exact same function. Step 2: Collaborate with Speech Pathologist to identify appropriate communication form. Step 3: Select form that is efficient and as easy as the behaviour. Step 4: Teach in calm low-demand conditions. Step 5: Honour communication immediately and consistently every time. This is non-negotiable. Step 6: Train all support people across all environments. Step 7: Monitor both behaviour and replacement communication as parallel data streams.
-
-S03 Visual Supports and Predictability Systems: Tier 1 Established Evidence. All populations. Schedules, now/next boards, task breakdowns, visual timers, choice boards. Behaviours: Task Refusal, Emotional Dysregulation, Elopement, Disruptive Behaviour, Physical Aggression, Verbal Aggression, Demand Avoidance PDA. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Assess where unpredictability or transitions drive distress. Step 2: Determine format matched to person's profile. Step 3: Build schedules collaboratively using person's preferred images. Step 4: Make schedules interactive. Step 5: Use visual timers to signal transitions before they occur. Step 6: Introduce a change symbol to build tolerance for variation. Step 7: Ensure cross-setting consistency.
-
-S04 Environmental Modification and Sensory Environment Design: Tier 1 Established Evidence. All populations. Changing physical, social, or sensory environment to reduce triggering conditions. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Emotional Dysregulation, Elopement, Disruptive Behaviour, Stereotypy. Functions: Escape/Avoidance, Automatic/Sensory, Attention. Step 1: Ecological assessment across all environments. Step 2: Identify sensory contributors: noise, lighting, visual clutter, temperature. Step 3: Modify: dim lighting, acoustic panels, noise-reducing headphones, flexible seating. Step 4: Examine social environment and reduce demand density. Step 5: Ensure enriched environment with continuous access to preferred items. Step 6: Create or designate a regulation space. Step 7: Involve person in designing their environment.
-
-S05 Antecedent Mapping and Trigger Modification: Tier 1 Established Evidence. All populations. Systematically identifying events that precede behaviour then modifying those conditions. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Task Refusal, Verbal Aggression, Elopement. Functions: Escape/Avoidance, Attention, Access to Tangibles. Step 1: Map antecedents using ABC data. Step 2: Identify setting events: disrupted sleep, illness, medication changes, skipped meals. Step 3: Develop setting event protocol with reduced demands for high-vulnerability days. Step 4: Create shift-to-shift communication system for setting event status. Step 5: Remove or modify identified antecedents. Step 6: Document all modifications trialled. Step 7: Balance trigger removal with concurrent teaching strategies.
-
-S06 Choice-Making and Autonomy Architecture: Tier 1 Established Evidence. All populations. Embedding meaningful genuine opportunities for agency and control throughout the day. Behaviours: Task Refusal, Physical Aggression, Verbal Aggression, Elopement, Demand Avoidance PDA, Emotional Dysregulation. Functions: Escape/Avoidance, Access to Tangibles. Step 1: Audit person's current day for genuine choices available. Step 2: Embed micro-choices throughout the day. Step 3: Ensure choices are genuine and honoured. Step 4: Involve person in planning their own schedule, goals, and activities. Step 5: For PDA profiles: reframe demands as invitations using indirect language: I wonder if, Would you like to help me with, You might be interested to know. Step 6: Provide choice in how tasks are completed.
-
-S07 Collaborative Problem Solving CPS: Tier 2 Moderate Evidence. All populations. Ross Greene model. Behaviour reflects lagging skills not wilful defiance. Behaviours: Task Refusal, Physical Aggression, Verbal Aggression, Demand Avoidance PDA, Emotional Dysregulation. Functions: Escape/Avoidance, Attention. Step 1: Identify specific unsolved problems during calm states. Step 2: Empathy step: open with genuine curiosity not accusation. Step 3: Define adult concern around impact. Step 4: Invitation to generate mutually workable solutions addressing both concerns. Step 5: Evaluate and trial agreed solutions. Step 6: Follow up and document. Never use during crisis.
-
-S08 Co-Regulation and Relational Safety: Tier 2 Moderate Evidence. All populations. Calm attuned support person uses regulated nervous system to help another regulate. Polyvagal theory and attachment science. Behaviours: Emotional Dysregulation, Physical Aggression, Verbal Aggression, Elopement, Self-Injurious Behaviour. Functions: Attention, Escape/Avoidance, Automatic/Sensory. Step 1: Prioritise relationship-building with non-demand interest-led time. Step 2: Train support people in low arousal attuned presence. Step 3: Model regulation — staff anxiety transmits directly to participant. Step 4: Use serve and return interaction following person's lead. Step 5: During distress prioritise presence and safety over problem-solving. Step 6: Avoid explanations during or immediately after dysregulated episodes. Step 7: When regulated connect warmly before resuming routines.
-
-S09 Low Arousal Approach: Tier 2 Moderate Evidence. All populations. Andrew McDonnell Studio3. Reducing environmental and interpersonal arousal. Behaviours: Physical Aggression, Verbal Aggression, Emotional Dysregulation, Property Destruction, Elopement, Self-Injurious Behaviour. Functions: Escape/Avoidance, Attention, Automatic/Sensory. Step 1: Train all support people: reduce demands, avoid confrontation, prioritise relational safety over compliance. Step 2: When behaviour emerging: slow down, step back, soften voice, reduce eye contact, remove demands. Step 3: Use minimal calm verbal communication: short, clear, warm statements. Step 4: Remove audience. Step 5: Withdraw from confrontational interactions without abandonment. Step 6: After resolution reconnect gently without revisiting incident immediately. Step 7: Debrief with team after significant incidents.
-
-S10 Sensory Diet and Occupational Therapy Regulation Programme: Tier 2 Moderate Evidence. All populations. Individualised scheduled programme of sensory activities designed by OT. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Emotional Dysregulation, Stereotypy, Disruptive Behaviour. Functions: Automatic/Sensory, Escape/Avoidance. Step 1: Obtain comprehensive sensory assessment from OT using SPM-2 or Sensory Profile 2. Step 2: Identify person's sensory profile across all systems. Step 3: Design daily schedule of sensory activities matched to profile. Step 4: Embed activities at natural transition points. Step 5: Train all support people consistently. Step 6: Ensure continuous access to self-directed sensory tools. Step 7: Review quarterly.
-
-S11 Interoception Awareness Training: Tier 2 Moderate Evidence. All populations. Kelly Mahler curriculum. Teaching recognition of internal body signals. Behaviours: Emotional Dysregulation, Self-Injurious Behaviour, Physical Aggression, Verbal Aggression. Functions: Automatic/Sensory, Escape/Avoidance. Step 1: Introduce body awareness during calm fun states. Step 2: Use Kelly Mahler Interoception Curriculum. Step 3: Create personalised body maps. Step 4: Practise naming sensations in low-stakes activities. Step 5: Build personal body signal glossary. Step 6: Teach support people to prompt body check-ins. Step 7: Progress slowly led by person.
-
-S12 Zones of Regulation: Tier 2 Moderate Evidence. All populations. Leah Kuypers 2011. Blue: low arousal. Green: optimal regulated. Yellow: heightened alert. Red: crisis. Behaviours: Emotional Dysregulation, Physical Aggression, Verbal Aggression, Self-Injurious Behaviour. Functions: Escape/Avoidance, Attention, Automatic/Sensory. Step 1: Introduce zones through engaging teaching during calm states. Step 2: Create personalised zones reference chart with person's own examples. Step 3: Teach personalised toolbox for each zone. Step 4: Practise identifying zones in low-stakes moments. Step 5: Introduce concepts of triggers and tools. Step 6: Embed zones check-ins at natural transition points. Step 7: Build portable physical regulation toolkit.
-
-S13 Social Stories and Narrative Supports: Tier 2 Moderate Evidence. All populations. Carol Gray 2010. Short personalised narratives from person's perspective. Behaviours: Task Refusal, Emotional Dysregulation, Physical Aggression, Elopement, Disruptive Behaviour. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Identify specific situation generating difficulty. Step 2: Write from person's first-person perspective in positive non-judgmental tone. Step 3: Follow Gray's sentence ratio: primarily descriptive, some perspective, some coaching, minimal directive. Step 4: Keep brief and visually supported. Step 5: Introduce 1-2 days before relevant situation. Step 6: Involve person in reviewing and editing. Step 7: Never use as correction or post-incident lecture.
-
-S14 DIR Floortime: Tier 2 Moderate Evidence. All populations. Stanley Greenspan and Serena Wieder. Developmental relationship-based framework prioritising following person's lead. Behaviours: Emotional Dysregulation, Physical Aggression, Self-Injurious Behaviour, Task Refusal, Disruptive Behaviour. Functions: Attention, Escape/Avoidance, Automatic/Sensory. Step 1: Training in DIR framework required. Step 2: Follow person's lead rather than redirecting. Step 3: Build circles of communication around person's interests. Step 4: Match person's affect: be present warm playful and genuinely engaged. Step 5: Respect self-directed sensory and regulatory behaviour. Step 6: Identify functional emotional developmental level. Step 7: Implement across daily routines.
-
-S15 Safe Retreat Space and Regulation Environment: Tier 2 Moderate Evidence. All populations. Designated person-designed area for voluntary self-initiated access to regulate. Never used as consequence. Fundamentally distinct from seclusion which is a regulated restrictive practice. Behaviours: Emotional Dysregulation, Physical Aggression, Self-Injurious Behaviour, Elopement. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Design space collaboratively with person. Step 2: Include person's regulatory items: weighted items, soft textures, adjustable lighting, music, movement tools. Step 3: Make access completely voluntary and unconditional. Step 4: Establish communication signal for needing space. Step 5: Support people must not follow person in unless immediate safety risk. Step 6: Create simple signal for when person is ready to re-engage. Step 7: Never remove access as consequence.
-
-S16 PACE Model Playfulness Acceptance Curiosity Empathy: Tier 2 Moderate Evidence. All populations. Dan Hughes Dyadic Developmental Psychotherapy. Relational stance. Behaviours: Emotional Dysregulation, Physical Aggression, Verbal Aggression, Task Refusal, Self-Injurious Behaviour. Functions: Attention, Escape/Avoidance. Step 1: Playfulness: bring warmth, lightness, and joy. Step 2: Acceptance: unconditional positive regard for person separate from behaviour. Step 3: Curiosity: non-judgmental curiosity using I wonder what was going on for you. Step 4: Empathy: reflect emotional experience with compassion without fixing. Step 5: Use PACE in all interactions consistently. Step 6: Train all team members. Step 7: Reflect in supervision on own PACE practice.
-
-S17 Demand Reduction and Low Demand Approach PDA-Informed: Tier 2 Moderate Evidence. All populations. Fundamentally restructuring nature, language, and volume of demands. Behaviours: Task Refusal, Physical Aggression, Verbal Aggression, Elopement, Demand Avoidance PDA, Emotional Dysregulation. Functions: Escape/Avoidance. Step 1: Conduct demand audit to identify which demands are truly essential. Step 2: Replace direct instructions with indirect collaborative language: I wonder if, Would you mind helping me, You might be interested to know. Step 3: Frame participation as optional and interest-led wherever possible. Step 4: Allow person to lead sequence, timing, and format of non-essential activities. Step 5: Avoid negotiating during dysregulated states. Step 6: Educate all stakeholders in PDA-informed approaches. Step 7: Build shared written understanding of non-negotiable demands.
-
-S18 DBT-Informed Skills Emotional Regulation and Distress Tolerance: Tier 2 Moderate Evidence. All populations. Marsha Linehan. Emotional regulation, distress tolerance, mindfulness, interpersonal effectiveness. Behaviours: Emotional Dysregulation, Self-Injurious Behaviour, Verbal Aggression, Physical Aggression. Functions: Escape/Avoidance, Automatic/Sensory, Attention. Step 1: Formal DBT delivery by qualified DBT therapist with clinical supervision. Step 2: Mindfulness: brief sensory-based activities. Step 3: Emotional regulation: identify and name emotions, check the facts. Step 4: Distress tolerance TIPP skills: Temperature cold water, Intense exercise, Paced breathing, Paired muscle relaxation. Step 5: STOP skill: Stop, Take a step back, Observe, Proceed mindfully. Step 6: Build personalised distress tolerance toolkit. Step 7: Adapt all skills to person's profile.
-
-S19 Matched Sensory Alternatives Sensory Substitution: Tier 2 Moderate Evidence. All populations. Providing access to items producing same sensory feedback as behaviour. Behaviours: Self-Injurious Behaviour, Stereotypy, PICA, Property Destruction. Functions: Automatic/Sensory. Step 1: Confirm automatic/sensory function via FBA. Step 2: Sensory analysis with OT. Step 3: Identify matched alternatives providing similar sensory input. Step 4: Assess preference. Step 5: Ensure continuous unconditional access. Step 6: Teach person to access alternatives independently. Step 7: Monitor and rotate as needed.
-
-S20 Enriched Environment and Access to Preferred Activities: Tier 1 Established Evidence. All populations. Continuous access to varied preferred motivating items, activities, and social interaction. Behaviours: Self-Injurious Behaviour, Stereotypy, Physical Aggression, Disruptive Behaviour, PICA, Emotional Dysregulation. Functions: Automatic/Sensory, Attention, Access to Tangibles. Step 1: Conduct thorough preference assessment. Step 2: Identify preferred items, activities, sensory experiences, social interactions. Step 3: Ensure high-preference items freely and continuously accessible throughout day. Step 4: Provide variety by rotating preferred items. Step 5: Ensure social environment is enriched. Step 6: Include activities at multiple sensory levels. Step 7: Reassess and update regularly.
-
-S21 Transition Supports and Change Preparation: Tier 2 Moderate Evidence. All populations. Proactive strategies preparing person for changes in activity, location, or routine. Behaviours: Emotional Dysregulation, Physical Aggression, Verbal Aggression, Task Refusal, Elopement. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Identify challenging transitions through ABC data. Step 2: Build transition preparation with warnings at 10, 5, and 2 minutes before. Step 3: Use visual timer person can independently reference. Step 4: Provide now/next board. Step 5: For new environments provide advance visual preview. Step 6: Ensure transition destination contains something appealing. Step 7: Practise difficult transitions in low-stakes conditions.
-
-S22 Anxiety Management in Neurodivergent Presentations: Tier 2 Moderate Evidence. All populations. Addressing significant co-occurrence of anxiety — estimated 40-50 percent of autistic people. Behaviours: Emotional Dysregulation, Task Refusal, Demand Avoidance PDA, Elopement, Physical Aggression, Verbal Aggression. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Assess anxiety comprehensively. Step 2: Psychoeducation using appropriate language. Step 3: Somatic tools: paced breathing, cold water on wrists, bilateral stimulation, movement. Step 4: Cognitive approaches adapted for neurodivergent processing: thought testing, worry time, externalising anxiety. Step 5: Environmental reduction of uncertainty using visual supports. Step 6: Gradual exposure with psychologist where anxiety is phobia-specific. Step 7: Build personalised anxiety management plan.
-
-S23 Strengths-Based and Interests-Led Engagement: Tier 2 Moderate Evidence. All populations. Using person's genuine interests as primary vehicle for engagement. Behaviours: Task Refusal, Demand Avoidance PDA, Emotional Dysregulation, Disruptive Behaviour, Physical Aggression. Functions: Escape/Avoidance, Attention. Step 1: Conduct comprehensive strengths and interests assessment. Step 2: Map interests across domains. Step 3: Use interests as entry point for all skill-building. Step 4: Allow extended time with interests as regulation tool. Step 5: Build support relationship through shared engagement. Step 6: For PDA profiles interest-led engagement is often the only effective entry point. Step 7: Document strengths and interests prominently in BSP.
-
-S24 Mindfulness-Based Approaches Adapted for Neurodivergent People: Tier 2 Moderate Evidence. All populations. Movement-based, sensory-grounded, brief practices. Behaviours: Emotional Dysregulation, Self-Injurious Behaviour, Verbal Aggression, Physical Aggression. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Assess sensory and attentional profile. Step 2: Begin with externally focused sensory mindfulness: notice five things you can see. Step 3: Introduce brief structured practices: 30-second grounding exercises. Step 4: Use movement as mindfulness vehicle. Step 5: Use visual or audio aids. Step 6: Teach during calm positive conditions. Step 7: Build personalised mindfulness micro-practice.
-
-S25 Medical and Physical Health Review: Tier 1 Established Evidence. All populations. Examining whether behaviour is driven by pain, medical conditions, GI disturbance, sleep disorders, hormonal factors, medication side effects. Behaviours: Self-Injurious Behaviour, Physical Aggression, Verbal Aggression, Emotional Dysregulation, Task Refusal, Disruptive Behaviour. Functions: Automatic/Sensory, Escape/Avoidance. Step 1: Include medical review as mandatory component of every BSP. Step 2: Map behaviour patterns against medical cycles. Step 3: Collaborate with GP or specialist and share PBS data. Step 4: Review current medications for side effects and interactions. Step 5: Assess sleep comprehensively. Step 6: Address dental health proactively. Step 7: Reassess behaviour following medical treatment.
-
-S26 Crisis and Safety Planning: Tier 1 Established Evidence. All populations. Clear step-by-step guidance for recognising escalation, responding safely, and post-crisis recovery. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Emotional Dysregulation, Elopement. Functions: All functions. Step 1: Map escalation cycle with specific observable stages for this person. Step 2: For each stage develop specific guidance: what to do, what to say, what to avoid. Step 3: Early stage: reduce demands, increase space, offer preferred items, use low arousal language. Step 4: Escalation stage: remove audience, minimise verbal interaction, ensure environmental safety. Step 5: Crisis stage: ensure safety using minimum intervention necessary. Any physical intervention must be authorised as regulated restrictive practice. Step 6: Recovery stage: allow time, reconnect warmly with food, drink, or comfort. Step 7: Post-incident reflective debrief to update plan.
-
-S27 AAC and Communication Rights Framework: Tier 1 Established Evidence. All populations. Every person has the right to communicate. No-tech, low-tech, and high-tech approaches. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Verbal Aggression, Elopement, Task Refusal, Emotional Dysregulation. Functions: All functions. Step 1: Ensure AAC assessment by qualified Speech Pathologist with AAC expertise. Step 2: Design communication system based on assessment. Step 3: Implement aided language stimulation: support people model AAC throughout day. Step 4: Ensure AAC has robust vocabulary beyond requesting. Step 5: Respond to all communication attempts with warmth. Step 6: Never restrict access to AAC as consequence. Step 7: Ensure AAC training extends to all environments.
-
-S28 Positive Programming and Lifestyle Redesign: Tier 2 Moderate Evidence. All populations. Comprehensively reviewing and enriching person's daily life. Behaviours: Physical Aggression, Self-Injurious Behaviour, Property Destruction, Emotional Dysregulation, Disruptive Behaviour, Stereotypy. Functions: All functions. Step 1: Conduct quality of life assessment. Step 2: Identify quality of life gaps. Step 3: Design enriched person-centred daily schedule collaboratively. Step 4: Build meaningful community access and social connection. Step 5: Ensure person has real opportunities to contribute and be seen as competent. Step 6: Review schedule monthly. Step 7: Document quality of life goals explicitly in BSP.
-
-S29 Active Support: Tier 1 Established Evidence. Intellectual Disability. Support workers engage people in meaningful participation in all activities throughout day. Behaviours: Disruptive Behaviour, Emotional Dysregulation, Self-Injurious Behaviour, Social Withdrawal. Functions: Attention, Access to Tangibles, Automatic/Sensory. Step 1: Train all support workers in Active Support principles. Step 2: Conduct activity analysis for each daily routine. Step 3: Grade support using least to most principle. Step 4: Use little and often principle. Step 5: Match activities to preferences and strengths. Step 6: Implement organisational monitoring. Step 7: Review participation and behaviour data together.
-
-S30 Errorless Learning: Tier 1 Established Evidence. Intellectual Disability, Acquired Brain Injury. Teaching technique minimising errors through high levels of support. Behaviours: Task Refusal, Physical Aggression, Verbal Aggression, Emotional Dysregulation. Functions: Escape/Avoidance. Step 1: Conduct task analysis. Step 2: Begin with prompt level guaranteeing correct performance. Step 3: Provide warm acknowledgement for correct steps. Step 4: Use prompt fading schedule. Step 5: If error occurs immediately provide correct prompt without attention to error. Step 6: Keep sessions brief and positive ending on success. Step 7: Document prompt levels and data.
-
-S31 Supported Decision-Making and Dignity of Risk: Tier 2 Moderate Evidence. Intellectual Disability. UN CRPD Article 12. Behaviours: Task Refusal, Physical Aggression, Verbal Aggression, Elopement. Functions: Escape/Avoidance, Access to Tangibles. Step 1: Identify decisions being made for person that they could make themselves. Step 2: Develop decision support plan. Step 3: Provide information in accessible formats. Step 4: Allow adequate time. Step 5: Document and respect person's expressed preferences. Step 6: Address risk proportionately. Step 7: Involve formal supported decision-making model for significant decisions.
-
-S32 TEACCH-Informed Structured Teaching: Tier 2 Moderate Evidence. Intellectual Disability, Autism/Neurodivergence. Organising environment, time, tasks, and communication to support independence. Behaviours: Task Refusal, Emotional Dysregulation, Disruptive Behaviour, Elopement. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Physical structure: organise environment so different areas signal different activities. Step 2: Scheduling: ensure individualised visual schedule. Step 3: Work systems: visual system for each activity. Step 4: Task organisation: left-to-right top-to-bottom. Step 5: Visual instructions embedded in task itself. Step 6: Train all support people. Step 7: Gradually increase complexity as independence improves.
-
-S33 ABI-Informed Behaviour Support Framework: Tier 2 Moderate Evidence. Acquired Brain Injury. Ensuring BSP accounts for specific neurological profile. Behaviours: Physical Aggression, Verbal Aggression, Emotional Dysregulation, Task Refusal, Disruptive Behaviour. Functions: Escape/Avoidance, Attention, Automatic/Sensory. Step 1: Review all neuropsychological assessment reports. Step 2: Collaborate with neuropsychologist or rehabilitation physician. Step 3: Map relationship between cognitive deficits and behaviour: frontal lobe impulsivity, limbic emotional dysregulation, reduced insight, fatigue-driven irritability. Step 4: Design BSP to work with neurological profile. Step 5: Educate all support people about neurological basis. Step 6: Set realistic neurologically appropriate goals. Step 7: Review BSP as neurological recovery progresses.
-
-S34 Fatigue Management Post-ABI: Tier 2 Moderate Evidence. Acquired Brain Injury. Addressing significant impact of post-ABI fatigue — affects up to 80 percent of people post-ABI. Behaviours: Physical Aggression, Verbal Aggression, Emotional Dysregulation, Task Refusal, Disruptive Behaviour. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Conduct fatigue assessment using Mental Fatigue Scale or Fatigue Severity Scale. Step 2: Map fatigue pattern across day and week. Step 3: Restructure schedule: demanding tasks during peak capacity, low-demand activities during high-fatigue periods. Step 4: Build proactive planned rest breaks before fatigue is reached. Step 5: Educate person and supports about fatigue as neurological phenomenon. Step 6: Develop fatigue monitoring system. Step 7: Adjust demands immediately when fatigue identified.
-
-S35 Compensatory Strategy Training and Cognitive Scaffolding ABI: Tier 2 Moderate Evidence. Acquired Brain Injury. Teaching use of external aids to compensate for acquired cognitive deficits. Behaviours: Task Refusal, Verbal Aggression, Emotional Dysregulation, Disruptive Behaviour. Functions: Escape/Avoidance, Attention. Step 1: Obtain neuropsychological assessment. Step 2: Introduce compensatory strategies in collaboration with OT and neuropsychology. Step 3: Memory aids: memory books, diaries, wall calendars, smartphone alarms. Step 4: Attention supports: reduce distractions, use timers. Step 5: Executive function supports: written daily plans, visual checklists, decision-making templates. Step 6: Train support people to prompt strategy use consistently. Step 7: Fade support progressively.
-
-S36 Recovery-Oriented Practice: Tier 2 Moderate Evidence. Mental Health. Framework prioritising person's self-defined recovery journey. Behaviours: Social Withdrawal, Emotional Dysregulation, Self-Harm, Task Refusal. Functions: Escape/Avoidance, Attention. Step 1: Begin with genuine exploration of person's values, hopes, strengths, and vision. Step 2: Co-produce goals meaningful to person. Step 3: Hold hope actively. Step 4: Prioritise self-determination. Step 5: Identify and build on existing strengths and interests. Step 6: Facilitate connection to peer support. Step 7: Review progress in terms of quality of life and meaning.
-
-S37 Acceptance and Commitment Therapy ACT Informed Approaches: Tier 2 Moderate Evidence. Mental Health, Autism/Neurodivergence. Steven Hayes. Psychological flexibility. Core processes: acceptance, defusion, present-moment awareness, self-as-context, values clarification, committed action. Behaviours: Emotional Dysregulation, Self-Harm, Task Refusal, Social Withdrawal. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Acceptance: making room for difficult thoughts and feelings without struggling. Step 2: Defusion: observe thoughts rather than be controlled by them. Step 3: Present-moment awareness through mindfulness. Step 4: Self-as-context: stable observing sense of self. Step 5: Values clarification: what genuinely matters to person. Step 6: Committed action: small concrete steps toward values. Step 7: Use visual metaphors and adapted exercises.
-
-S38 Motivational Interviewing MI: Tier 1 Established Evidence. Mental Health, Problematic Gaming, Intellectual Disability. William Miller and Stephen Rollnick. Collaborative person-centred counselling. Behaviours: Task Refusal, Problematic Gaming, Substance Use, Social Withdrawal, Self-Harm. Functions: Escape/Avoidance, Access to Tangibles. Step 1: Establish rapport with genuine empathy. Step 2: Roll with resistance: do not argue, reflect and explore. Step 3: Explore ambivalence using decisional balance. Step 4: Elicit change talk from person. Step 5: Support self-efficacy. Step 6: Avoid righting reflex: do not lecture or moralize. Step 7: When person is ready collaboratively plan specific achievable next steps.
-
-S39 Mental Health Safety Planning: Tier 1 Established Evidence. Mental Health. Collaboratively developed written plan identifying warning signs, coping strategies, social supports, and crisis contacts. Behaviours: Self-Harm/Suicidal Ideation, Emotional Dysregulation. Functions: Escape/Avoidance, Automatic/Sensory. Step 1: Develop during calm or stable period. Step 2: Warning signs: personal early warning signs. Step 3: Internal coping strategies. Step 4: Social distractions: named people and situations. Step 5: People to ask for help: specific named individuals. Step 6: Crisis services: Lifeline 13 11 14, Suicide Call Back Service 1300 659 467, Beyond Blue 1300 22 4636. Step 7: Means restriction where safe and acceptable. Step 8: Follow up and review regularly.
-
-S40 Schema-Informed Understanding of Entrenched Patterns: Tier 2 Moderate Evidence. Mental Health. Jeffrey Young. Deeply entrenched patterns from unmet childhood needs. Schemas: abandonment, defectiveness, emotional deprivation, mistrust. Behaviours: Physical Aggression, Verbal Aggression, Self-Harm, Emotional Dysregulation, Task Refusal. Functions: Escape/Avoidance, Attention. Step 1: Schema assessment via qualified schema therapist or Young Schema Questionnaire. Step 2: Identify core schemas and schema modes. Step 3: Share formulation in accessible validating language. Step 4: Train support people in schema-informed responses. Step 5: Use limited reparenting principles: consistent warmth, positive regard, reliability. Step 6: Identify and modify schema triggers in support environment. Step 7: Support formal schema therapy with qualified therapist.
-
-S41 Function-Based Assessment of Gaming and Technology Use: Tier 2 Moderate Evidence. Autism/Neurodivergence, Mental Health, Intellectual Disability, Problematic Gaming. Applying PBS FBA framework to gaming. Distinguishes functional gaming from genuinely problematic use. Behaviours: Problematic Gaming, Emotional Dysregulation, Social Withdrawal, Task Refusal. Functions: Escape/Avoidance, Automatic/Sensory, Attention, Access to Tangibles. Step 1: Comprehensive assessment before forming conclusions. Step 2: Identify function: regulation, connection, mastery, identity, escape from overwhelming environments. Step 3: Assess harm: significant interference with sleep, physical health, school, or relationships. Step 4: If regulatory function: address underlying regulation needs first. Step 5: If social function: explore whether online connections supplement or replace face-to-face. Step 6: If escape function: assess and address what person is escaping from. Step 7: If harm established use function-based understanding to guide intervention.
-
-S42 Family Systems Approach and Technology Boundaries: Tier 2 Moderate Evidence. Problematic Gaming, Mental Health. Addressing whole family ecology around technology. Behaviours: Problematic Gaming, Emotional Dysregulation, Physical Aggression, Verbal Aggression, Task Refusal. Functions: Escape/Avoidance, Access to Tangibles. Step 1: Work with whole family. Step 2: Psychoeducation for parents about gaming in neurodivergent young people. Step 3: Support parents to move from unilateral device removal to collaborative agreements. Step 4: Collaboratively develop Family Technology Agreement including timing, transitions, natural save points, alternative activities. Step 5: Address transition planning as most common flashpoint. Step 6: Build alternative connection based on young person's interests. Step 7: Address parental wellbeing.
-
-S43 Behavioural Activation and Alternative Engagement Building: Tier 1 Established Evidence. Mental Health, Problematic Gaming, Autism/Neurodivergence. Scheduling and increasing engagement in rewarding values-consistent activities. Behaviours: Social Withdrawal, Problematic Gaming, Emotional Dysregulation, Task Refusal. Functions: Escape/Avoidance, Access to Tangibles, Attention. Step 1: Map person's current activity profile. Step 2: Identify functions that gaming or withdrawal is meeting. Step 3: Brainstorm menu of potential alternative activities with person based on their interests. Step 4: Start with low-barrier immediately rewarding activities. Step 5: Schedule activities alongside gaming initially, not replacing. Step 6: Gradually increase range and duration as alternatives become established. Step 7: When alternatives are established gaming naturally becomes less dominant without external restriction.
-
-Population Index: Autism/Neurodivergence: S01-S28, S32, S37, S41, S43. Intellectual Disability: S01-S32, S38, S41. Acquired Brain Injury: S01-S28, S30, S33, S34, S35. Mental Health: S01-S28, S36-S43. Problematic Gaming: S01-S28, S38, S41, S42, S43.
-
-Evidence: Tier 1 Established: S01, S02, S03, S04, S05, S06, S20, S25, S26, S27, S29, S30, S38, S39, S43. Tier 2 Moderate: S07-S19, S21-S24, S28, S31-S37, S40-S42.
-
-Key References: Carr et al 2002. Gray 2010 Social Story Book. Greene 2014 Lost at School. Greenspan and Wieder 2006 Engaging Autism. Hughes 2009 Attachment-Focused Parenting. Kuypers 2011 Zones of Regulation. Linehan 1993 DBT. Mahler 2019 Interoception Curriculum. McDonnell 2010 Low Arousal Approaches. NDIS Commission 2025 Rules for Specialist Behaviour Support Providers. Porges 2011 Polyvagal Theory. Tiger Hanley Bruzek 2008 FCT Review. Webber Richardson Lambrick 2019 PBS Practice Framework Australia. Hayes Wilson Strosahl 2012 ACT. Miller Rollnick 2013 Motivational Interviewing. Young Klosko Weishaar 2003 Schema Therapy. Mansell Beadle-Brown 2012 Active Support. Uphoff et al 2020 Behavioural Activation Cochrane Review. Stanley Brown 2012 Safety Planning Intervention."""
-
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 # TEXT EXTRACTION
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 def extract_text_from_docx(file_bytes: bytes) -> str:
     doc = DocxDocument(BytesIO(file_bytes))
@@ -154,22 +67,329 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     reader = PdfReader(BytesIO(file_bytes))
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
+def extract_text_from_excel(file_bytes: bytes) -> str:
+    """Convert Excel (e.g. Microsoft Forms export) to structured text for Claude analysis."""
+    if not EXCEL_AVAILABLE:
+        return ""
+    wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True)
+    parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        if ws.max_row is None or ws.max_row == 0:
+            continue
+        parts.append(f"[Sheet: {sheet_name}]")
+        headers = []
+        for ri, row in enumerate(ws.iter_rows(values_only=True)):
+            cells = [str(c) if c is not None else "" for c in row]
+            if not any(c.strip() for c in cells):
+                continue
+            if ri == 0:
+                headers = cells
+                parts.append("COLUMNS: " + " | ".join(cells))
+            else:
+                if headers:
+                    row_parts = [
+                        f"{headers[i]}: {cells[i]}"
+                        for i in range(min(len(headers), len(cells)))
+                        if i < len(cells) and cells[i].strip()
+                    ]
+                    if row_parts:
+                        parts.append("ENTRY: " + " || ".join(row_parts))
+                else:
+                    if any(c.strip() for c in cells):
+                        parts.append(" | ".join(cells))
+    return "\n".join(parts)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CLAUDE — PBSP EXTRACTION (Tab 1)
-# ══════════════════════════════════════════════════════════════════════════════
+
+# ‚îÄ‚îÄ Built-in strategy library ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+_APP_DIR           = os.path.dirname(os.path.abspath(__file__))
+_LIBRARY_FILENAMES = ["strategy_library.docx", "strategy_library.pdf", "strategy_library.txt"]
+
+@st.cache_resource
+def load_builtin_library():
+    """Return (text, filename) for a bundled strategy library, or (None, None) if absent."""
+    for fname in _LIBRARY_FILENAMES:
+        path = os.path.join(_APP_DIR, fname)
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as f:
+                    fb = f.read()
+                if fname.endswith(".docx"):
+                    text = extract_text_from_docx(fb)
+                elif fname.endswith(".pdf"):
+                    text = extract_text_from_pdf(fb)
+                else:
+                    text = fb.decode("utf-8", errors="ignore")
+                return text, fname
+            except Exception:
+                pass
+    return None, None
+
+
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# CLAUDE ‚Äî BEHAVIOUR RECORDING ANALYSIS (Tab 1)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+
+BEHAVIOUR_RECORDING_PROMPT = """
+You are an experienced Positive Behaviour Support (PBS) Practitioner.
+The data below comes from a 30-day behaviour recording tool completed by family members or caregivers.
+The data may be exported from Microsoft Forms (as Excel), a PDF form, or a Word document.
+
+Analyse this data and extract clinically meaningful information.
+Be flexible about column names and data structure ‚Äî the recording format will vary.
+Look for: dates, times, behaviour descriptions, what happened before (antecedents/triggers),
+what happened after (consequences / carer responses), severity, location, and any carer notes.
+
+Return ONLY valid JSON ‚Äî no commentary, no markdown fences.
+
+JSON structure:
+{
+  "client_name": "client name if visible in the data, otherwise null",
+  "recording_period": "date range covered e.g. '1 May ‚Äì 30 May 2025', or null if not determinable",
+  "total_incidents": <integer ‚Äî total number of behaviour incidents recorded>,
+  "behaviours": [
+    {
+      "label": "Short clinical label (e.g. 'Physical aggression', 'Self-injurious behaviour', 'Property destruction')",
+      "carer_description": "How carers described this behaviour in their own words",
+      "frequency": <integer ‚Äî number of recorded incidents of this behaviour>,
+      "descriptors": ["Up to 5 observable descriptions from the data"]
+    }
+  ],
+  "patterns": {
+    "time_of_day": ["Patterns in timing ‚Äî e.g. 'Most incidents between 3‚Äì5pm (afternoon transition)'"],
+    "day_of_week": ["Day-of-week patterns ‚Äî e.g. 'Higher frequency on Mondays and after weekends'"],
+    "settings": ["Locations or contexts where behaviour tends to occur"],
+    "other": ["Any other notable patterns ‚Äî e.g. escalation over the month, clustering of incidents"]
+  },
+  "triggers": ["Specific antecedents and triggers recorded by carers ‚Äî be as specific as the data allows"],
+  "carer_responses": ["What carers actually did in response ‚Äî specific strategies or actions they used"],
+  "carer_concerns": "2‚Äì3 sentence summary of what the carers appear most concerned about",
+  "notes_for_practitioner": ["Clinical observations the PBS Practitioner should follow up ‚Äî gaps, patterns needing functional assessment, anything that stands out"]
+}
+
+Rules:
+- Assign clinically appropriate behaviour labels (not just carer wording)
+- total_incidents = sum of all individual behaviour frequencies
+- Be specific about triggers ‚Äî avoid generic 'unknown'
+- Note in notes_for_practitioner if data is sparse, inconsistent, or if key information is missing
+- Do not fabricate data that isn't in the recording
+
+RECORDING DATA:
+"""
+
+def extract_behaviour_recording(data_text: str, api_key: str) -> dict:
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model="claude-opus-4-5", max_tokens=2000,
+        messages=[{"role": "user", "content": BEHAVIOUR_RECORDING_PROMPT + data_text[:40000]}]
+    )
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
+    if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
+    return json.loads(raw)
+
+
+def recording_to_sr_format(data: dict) -> tuple:
+    """Convert extract_behaviour_recording output ‚Üí (client_info dict, behaviours list) for Tab 3."""
+    triggers_str = "; ".join(data.get("triggers", []))
+    client_info = {
+        "name":      data.get("client_name") or "Client",
+        "age":       "not specified",
+        "diagnosis": "not specified",
+        "comms":     "refer to behaviour recording",
+        "other":     data.get("carer_concerns") or "none provided",
+    }
+    behaviours = [
+        {
+            "name":        b.get("label", "Behaviour"),
+            "description": (b.get("carer_description") or "") +
+                           (f" ‚Äî {b.get('frequency')} incidents recorded" if b.get("frequency") else ""),
+            "triggers":    triggers_str,
+        }
+        for b in data.get("behaviours", [])
+    ]
+    return client_info, behaviours
+
+
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# BEHAVIOUR RECORDING ANALYSIS REPORT PDF (Tab 1)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+
+def generate_recording_report(data: dict) -> BytesIO:
+    buf = BytesIO()
+    c   = rl_canvas.Canvas(buf, pagesize=A4)
+
+    BOT, FTR_H, HDR_H = 12, 38, 68
+    MINI_HDR_H         = 28
+    MIN_Y              = BOT + FTR_H + 20
+    RH, SH, GAP        = 17, 20, 8
+    page_num           = [1]
+
+    client_name = data.get("client_name") or "Client"
+    period      = data.get("recording_period") or "30-day period"
+
+    def draw_footer():
+        drect(c, 0, BOT, W, FTR_H, fill=DEEP_BLUE)
+        drect(c, 0, BOT, 8, FTR_H, fill=TEAL)
+        ft = BOT + FTR_H
+        dlbl(c, LM+6, ft-14, "30-Day Behaviour Recording Analysis", 9, bold=True, color=white)
+        dlbl(c, W-LM, ft-14, f"Page {page_num[0]}", 9, color=HexColor('#8FC8DC'), align='right')
+        dlbl(c, W-LM, ft-28, "CONFIDENTIAL ‚Äî handle in line with your privacy policy",
+             8, italic=True, color=HexColor('#5B9FC0'), align='right')
+
+    def new_page():
+        draw_footer(); c.showPage(); page_num[0] += 1
+        drect(c, 0, H-MINI_HDR_H, W, MINI_HDR_H, fill=DEEP_BLUE)
+        drect(c, 0, H-MINI_HDR_H, 8, MINI_HDR_H, fill=TEAL)
+        dlbl(c, LM+6, H-MINI_HDR_H+9,
+             f"Behaviour Recording Analysis ‚Äî {client_name}", 10, bold=True, color=white)
+        return H - MINI_HDR_H - GAP
+
+    def ensure(y, needed):
+        return new_page() if y - needed < MIN_Y else y
+
+    # ‚îÄ‚îÄ Header ‚îÄ‚îÄ
+    y = H
+    drect(c, 0, y-HDR_H, W, HDR_H, fill=DEEP_BLUE)
+    drect(c, 0, y-HDR_H, 8, HDR_H, fill=TEAL)
+    dlbl(c, LM+6, y-22, "30-Day Behaviour Recording Analysis", 16, bold=True, color=white)
+    dlbl(c, LM+6, y-42, client_name, 13, color=HexColor('#C8E6F5'))
+    dlbl(c, LM+6, y-58, f"Recording period: {period}",
+         9, italic=True, color=HexColor('#5B9FC0'))
+    dlbl(c, W-LM, y-42, f"Total incidents: {data.get('total_incidents', '‚Äî')}",
+         13, bold=True, color=HexColor('#C8E6F5'), align='right')
+    dlbl(c, W-LM, y-58, f"Generated: {date.today().strftime('%d %B %Y')}",
+         9, italic=True, color=HexColor('#5B9FC0'), align='right')
+    y -= HDR_H + GAP
+
+    # ‚îÄ‚îÄ Behaviours identified ‚îÄ‚îÄ
+    behaviours = data.get("behaviours", [])
+    if behaviours:
+        total = data.get("total_incidents") or sum(b.get("frequency", 0) for b in behaviours) or 1
+        y = ensure(y, SH + 40)
+        y = sec(c, y, "Behaviours identified by carers", TEAL)
+        for b in behaviours:
+            freq  = b.get("frequency", 0)
+            pct   = f"{round(freq / total * 100)}%" if total else ""
+            label = b.get("label", "Behaviour")
+            desc  = b.get("carer_description", "")
+            descs = b.get("descriptors", [])
+
+            needed = 22 + (len(wrap_text(f"Described as: {desc}", "Helvetica-Oblique", 9, CW-16)) * 13 + 4 if desc else 0) + len(descs) * 14 + 10
+            y = ensure(y, needed)
+
+            # Behaviour header bar
+            drect(c, LM, y-22, CW, 22, fill=LIGHT_TEAL)
+            drect(c, LM, y-22, 5,  22, fill=TEAL)
+            dlbl(c, LM+13, y-14, label, 11, bold=True, color=DARK_TEXT)
+            dlbl(c, W-RM,  y-14, f"{freq} incidents  ({pct})",
+                 10, bold=True, color=TEAL, align='right')
+            y -= 22
+
+            if desc:
+                desc_lines = wrap_text(f"Carers described: {desc}", "Helvetica-Oblique", 9, CW-16)
+                desc_h = len(desc_lines) * 13 + 4
+                drect(c, LM, y-desc_h, CW, desc_h, fill=HexColor('#F5FFFE'))
+                for li, ln in enumerate(desc_lines):
+                    dlbl(c, LM+10, y-11-li*13, ln, 9, italic=True, color=MED_TEXT)
+                y -= desc_h
+
+            if descs:
+                desc_item_h = len(descs) * 14 + 4
+                drect(c, LM, y-desc_item_h, CW, desc_item_h, fill=LIGHT_TEAL)
+                for di, d_ in enumerate(descs):
+                    drect(c, LM+10, y-10-di*14, 6, 6, fill=TEAL)
+                    dlbl(c,  LM+20, y- 5-di*14, d_, 9, color=DARK_TEXT)
+                y -= desc_item_h
+            y -= 6
+
+    # ‚îÄ‚îÄ Patterns ‚îÄ‚îÄ
+    patterns  = data.get("patterns", {})
+    pat_items = []
+    for lbl, items in [("Time of day", patterns.get("time_of_day", [])),
+                        ("Day of week",  patterns.get("day_of_week", [])),
+                        ("Settings",     patterns.get("settings",    [])),
+                        ("Other",        patterns.get("other",       []))]:
+        for it in (items or []):
+            pat_items.append((lbl, it))
+
+    if pat_items:
+        pat_h = len(pat_items) * RH
+        y = ensure(y, SH + pat_h)
+        y = sec(c, y, "Patterns observed over 30 days", BLUE2)
+        drect(c, LM, y-pat_h, CW, pat_h, fill=LIGHT_BLUE)
+        for i, (lbl, txt) in enumerate(pat_items):
+            dlbl(c, LM+10, y-5-i*RH, f"{lbl}:", 9, bold=True, color=BLUE2)
+            dlbl(c, LM+82, y-5-i*RH, txt,        9, color=DARK_TEXT)
+        y -= pat_h + GAP
+
+    # ‚îÄ‚îÄ Triggers ‚îÄ‚îÄ
+    triggers = data.get("triggers", [])
+    if triggers:
+        trig_h = len(triggers) * RH
+        y = ensure(y, SH + trig_h)
+        y = sec(c, y, "Triggers identified by carers", AMBER)
+        drect(c, LM, y-trig_h, CW, trig_h, fill=LIGHT_AMBR)
+        for i, trig in enumerate(triggers):
+            drect(c, LM+10, y-9-i*RH, 7, 7, fill=AMBER)
+            dlbl(c,  LM+21, y-4-i*RH, trig, 9, color=DARK_TEXT)
+        y -= trig_h + GAP
+
+    # ‚îÄ‚îÄ Carer responses ‚îÄ‚îÄ
+    responses = data.get("carer_responses", [])
+    if responses:
+        resp_h = len(responses) * RH
+        y = ensure(y, SH + resp_h)
+        y = sec(c, y, "Strategies carers have already been trying", GREEN)
+        drect(c, LM, y-resp_h, CW, resp_h, fill=LIGHT_GRN)
+        for i, resp in enumerate(responses):
+            drect(c, LM+10, y-9-i*RH, 7, 7, fill=GREEN)
+            dlbl(c,  LM+21, y-4-i*RH, resp, 9, color=DARK_TEXT)
+        y -= resp_h + GAP
+
+    # ‚îÄ‚îÄ Carer concerns ‚îÄ‚îÄ
+    concerns = data.get("carer_concerns", "")
+    if concerns:
+        con_lines = wrap_text(concerns, "Helvetica-Oblique", 9.5, CW-24)
+        con_h = len(con_lines) * 15 + 10
+        y = ensure(y, SH + con_h)
+        y = sec(c, y, "Carer concerns ‚Äî summary", DEEP_BLUE)
+        drect(c, LM, y-con_h, CW, con_h, fill=LIGHT_BLUE)
+        for li, ln in enumerate(con_lines):
+            dlbl(c, LM+10, y-13-li*15, ln, 9.5, italic=True, color=DARK_TEXT)
+        y -= con_h + GAP
+
+    # ‚îÄ‚îÄ Notes for practitioner ‚îÄ‚îÄ
+    notes = data.get("notes_for_practitioner", [])
+    if notes:
+        notes_h = len(notes) * RH
+        y = ensure(y, SH + notes_h)
+        y = sec(c, y, "Notes for PBS Practitioner ‚Äî follow up", RED)
+        drect(c, LM, y-notes_h, CW, notes_h, fill=LIGHT_RED)
+        for i, note in enumerate(notes):
+            drect(c, LM+10, y-9-i*RH, 7, 7, fill=RED)
+            dlbl(c,  LM+21, y-4-i*RH, note, 9, bold=True, color=DARK_TEXT)
+        y -= notes_h + GAP
+
+    draw_footer()
+    c.save(); buf.seek(0); return buf
+
+
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# CLAUDE ‚Äî PBSP EXTRACTION (Tab 2)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 EXTRACTION_PROMPT = """
 You are a Positive Behaviour Support (PBS) assistant.
 Read the PBSP text below and extract key information into a JSON object.
 
 Rules:
-- Keep each bullet point under 90 characters — written for support workers to scan quickly
+- Keep each bullet point under 90 characters ‚Äî written for support workers to scan quickly
 - Use plain language (no clinical jargon where possible)
 - Focus on what is most operationally useful during a shift
 - If a field cannot be found, use an empty string or empty list
 
-Return ONLY valid JSON — no commentary, no markdown fences.
+Return ONLY valid JSON ‚Äî no commentary, no markdown fences.
 
 JSON structure:
 {
@@ -180,9 +400,9 @@ JSON structure:
   "about": ["up to 5 key points a support worker must know about this person"],
   "warning_signs": ["up to 5 observable early warning signs that behaviour is building"],
   "triggers": ["up to 6 known setting events and immediate triggers"],
-  "proactive": ["up to 5 proactive strategies — things to DO to prevent behaviour"],
-  "reactive": ["up to 5 reactive strategies — what to DO when behaviour occurs"],
-  "do_not": ["up to 4 things NOT to do — known escalators"],
+  "proactive": ["up to 5 proactive strategies ‚Äî things to DO to prevent behaviour"],
+  "reactive": ["up to 5 reactive strategies ‚Äî what to DO when behaviour occurs"],
+  "do_not": ["up to 4 things NOT to do ‚Äî known escalators"],
   "behaviours": [
     {
       "label": "short behaviour name (e.g. Verbal Outbursts)",
@@ -212,9 +432,9 @@ def extract_client_data(pbsp_text: str, api_key: str) -> dict:
     return json.loads(raw)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CLAUDE — STRATEGY RECOMMENDER (Tab 2)
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# CLAUDE ‚Äî STRATEGY RECOMMENDER (Tab 3)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 STRATEGY_PROMPT = """\
 You are an experienced Positive Behaviour Support (PBS) Practitioner.
@@ -222,7 +442,7 @@ Based on the client profile and behaviours described, recommend practical PBS st
 
 {library_instruction}
 
-Return ONLY valid JSON — no commentary, no markdown fences.
+Return ONLY valid JSON ‚Äî no commentary, no markdown fences.
 
 JSON structure:
 {{
@@ -231,18 +451,18 @@ JSON structure:
   "behaviours": [
     {{
       "behaviour": "behaviour name from input",
-      "likely_function": "Primary function (Escape/Avoidance | Access | Sensory | Attention) — one sentence rationale",
+      "likely_function": "Primary function (Escape/Avoidance | Access | Sensory | Attention) ‚Äî one sentence rationale",
       "proactive": ["Up to 5 proactive/antecedent strategies to prevent this behaviour"],
       "reactive": ["Up to 5 reactive de-escalation strategies for when this behaviour occurs"],
       "teach_instead": ["Up to 3 replacement skills or alternative communication strategies to build"],
-      "avoid": ["Up to 3 specific things NOT to do — common mistakes that escalate this behaviour"]
+      "avoid": ["Up to 3 specific things NOT to do ‚Äî common mistakes that escalate this behaviour"]
     }}
   ]
 }}
 
 Rules:
-- Keep each item under 90 characters — written for support workers to act on quickly
-- Be specific to the triggers and context described — avoid generic advice
+- Keep each item under 90 characters ‚Äî written for support workers to act on quickly
+- Be specific to the triggers and context described ‚Äî avoid generic advice
 - Base strategy recommendations on the likely function of each behaviour
 - Use plain language, not clinical jargon
 - Replacement skills must serve the same function as the behaviour (functionally equivalent)
@@ -299,6 +519,7 @@ def recommend_strategies(client_info: dict, behaviours: list, api_key: str,
 
 
 def pbsp_to_sr_format(data: dict) -> tuple:
+    """Convert extract_client_data output ‚Üí (client_info dict, behaviours list) for Tab 3."""
     age_info = data.get("age_info", "")
     parts    = [p.strip() for p in age_info.split("|")]
     age      = parts[0].replace("Age", "").strip() if parts else "not specified"
@@ -322,20 +543,23 @@ def pbsp_to_sr_format(data: dict) -> tuple:
     return client_info, behaviours
 
 
+# ‚îÄ‚îÄ Free-text behaviour description ‚Üí strategies ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+
 FREETEXT_STRATEGY_PROMPT = """\
 You are an experienced Positive Behaviour Support (PBS) Practitioner.
 A practitioner has described a client and their behaviours in plain language below.
 
 Your tasks:
 1. Read the description and identify each distinct behaviour of concern
-2. Assign each a clear clinical label
+2. Assign each a clear clinical label (e.g. "Physical aggression", "Self-injurious behaviour",
+   "Property destruction", "Verbal aggression", "Elopement")
 3. Infer the likely triggers and context from what is described
 4. Determine the likely function of each behaviour
 5. Recommend practical PBS strategies
 
 {library_instruction}
 
-Return ONLY valid JSON — no commentary, no markdown fences.
+Return ONLY valid JSON ‚Äî no commentary, no markdown fences.
 
 JSON structure:
 {{
@@ -344,18 +568,18 @@ JSON structure:
   "behaviours": [
     {{
       "behaviour": "Clinical label you have assigned",
-      "likely_function": "Primary function (Escape/Avoidance | Access | Sensory | Attention) — one sentence rationale drawn from the description",
+      "likely_function": "Primary function (Escape/Avoidance | Access | Sensory | Attention) ‚Äî one sentence rationale drawn from the description",
       "proactive": ["Up to 5 proactive strategies to prevent this behaviour"],
       "reactive": ["Up to 5 reactive de-escalation strategies when this behaviour occurs"],
       "teach_instead": ["Up to 3 replacement skills or communication strategies to build"],
-      "avoid": ["Up to 3 things NOT to do — common mistakes that escalate this behaviour"]
+      "avoid": ["Up to 3 things NOT to do ‚Äî common mistakes that escalate this behaviour"]
     }}
   ]
 }}
 
 Rules:
-- Keep each item under 90 characters — written for support workers to act on quickly
-- Use the description to infer triggers and context — be specific, not generic
+- Keep each item under 90 characters ‚Äî written for support workers to act on quickly
+- Use the description to infer triggers and context ‚Äî be specific, not generic
 - Assign clinically appropriate behaviour labels
 - Use plain language in strategy recommendations
 - Replacement skills must serve the same function as the behaviour
@@ -402,9 +626,9 @@ def recommend_from_freetext(client_info: dict, freetext: str, api_key: str,
     return json.loads(raw)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 # PDF HELPERS (shared)
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 def drect(c, x, y, w, h, fill=None, stroke=None, lw=0.75):
     c.saveState()
@@ -456,9 +680,9 @@ def wrap_text(text: str, font_name: str, font_size: float, max_w: float) -> list
     return lines or [""]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SUPPORT REFERENCE CARD
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# SUPPORT REFERENCE CARD PDF (Tab 2)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 def generate_support_card(d: dict) -> BytesIO:
     buf = BytesIO()
@@ -482,7 +706,7 @@ def generate_support_card(d: dict) -> BytesIO:
     dlbl(c, LM+6, y-22, d["name"],           22, bold=True, color=white)
     dlbl(c, LM+6, y-40, d.get("pronouns",""), 11, color=HexColor('#C8E6F5'))
     dlbl(c, LM+6, y-56, d.get("age_info",""), 10, color=HexColor('#8FC8DC'))
-    dlbl(c, LM+6, y-70, "Positive Behaviour Support  —  Behaviour Support Reference Card",
+    dlbl(c, LM+6, y-70, "Positive Behaviour Support  ‚Äî  Behaviour Support Reference Card",
          8, italic=True, color=HexColor('#5B9FC0'))
     y -= HDR_H + GAP
 
@@ -493,7 +717,7 @@ def generate_support_card(d: dict) -> BytesIO:
         dlbl(c,  LM+21, y- 7-i*RH, item, 9.5, color=DARK_TEXT)
     y -= (ABOUT_H-SH) + GAP
 
-    y = sec(c, y, "Early warning signs — watch for these", AMBER)
+    y = sec(c, y, "Early warning signs ‚Äî watch for these", AMBER)
     drect(c, LM, y-(WARN_H-SH), CW, WARN_H-SH, fill=LIGHT_AMBR)
     for i, item in enumerate(d["warning_signs"]):
         drect(c, LM+10, y-12-i*RH, 7, 7, fill=AMBER)
@@ -516,14 +740,14 @@ def generate_support_card(d: dict) -> BytesIO:
         dlbl(c,  rx+21, y-SH- 5-i*RH, item, 9.5, color=DARK_TEXT)
     y -= SIDE_H + GAP
 
-    y = sec(c, y, "When behaviour occurs — do this", TEAL)
+    y = sec(c, y, "When behaviour occurs ‚Äî do this", TEAL)
     drect(c, LM, y-(REACT_H-SH), CW, REACT_H-SH, fill=LIGHT_TEAL)
     for i, item in enumerate(d["reactive"]):
         drect(c, LM+10, y-12-i*RH, 7, 7, fill=TEAL)
         dlbl(c,  LM+21, y- 7-i*RH, item, 9.5, color=DARK_TEXT)
     y -= (REACT_H-SH) + GAP
 
-    y = sec(c, y, f"DO NOT — things that escalate behaviour for {d['preferred']}", RED)
+    y = sec(c, y, f"DO NOT ‚Äî things that escalate behaviour for {d['preferred']}", RED)
     drect(c, LM, y-(DONT_H-SH), CW, DONT_H-SH, fill=LIGHT_RED)
     for i, item in enumerate(d["do_not"]):
         drect(c, LM+10, y-12-i*RH, 7, 7, fill=RED)
@@ -536,14 +760,14 @@ def generate_support_card(d: dict) -> BytesIO:
     dlbl(c, LM+6, ft-16,
          f"Plan review: {d.get('review_date','')}  |  {d.get('practitioner','')}", 9, bold=True, color=white)
     dlbl(c, LM+6, ft-29, d.get("contact",""), 9, italic=True, color=HexColor('#C8E6F5'))
-    dlbl(c, W-LM, ft-29, "CONFIDENTIAL — handle in line with your privacy policy",
+    dlbl(c, W-LM, ft-29, "CONFIDENTIAL ‚Äî handle in line with your privacy policy",
          8, italic=True, color=HexColor('#5B9FC0'), align='right')
     c.save(); buf.seek(0); return buf
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ABC RECORDING FORM
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# ABC RECORDING FORM PDF (Tab 2)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 def generate_abc_form(d: dict) -> BytesIO:
     buf = BytesIO()
@@ -593,7 +817,7 @@ def generate_abc_form(d: dict) -> BytesIO:
     drect(c, LM, y-20, 20, 20, fill=BLUE2)
     dlbl(c, LM+10, y-13, "A", 11, bold=True, color=white, align='center')
     drect(c, LM+20, y-20, CW-20, 20, fill=LIGHT_BLUE)
-    dlbl(c, LM+28, y-13, "Antecedent — what happened immediately BEFORE?", 11, bold=True, color=BLUE2)
+    dlbl(c, LM+28, y-13, "Antecedent ‚Äî what happened immediately BEFORE?", 11, bold=True, color=BLUE2)
     y -= 20
     ant = d.get("antecedents_checklist", [])
     ant_h = 10 + ((len(ant)+1)//2)*18 + 18
@@ -608,7 +832,7 @@ def generate_abc_form(d: dict) -> BytesIO:
     drect(c, LM, y-20, 20, 20, fill=TEAL)
     dlbl(c, LM+10, y-13, "B", 11, bold=True, color=white, align='center')
     drect(c, LM+20, y-20, CW-20, 20, fill=LIGHT_TEAL)
-    dlbl(c, LM+28, y-13, "Behaviour — what did you observe? (facts only, no interpretations)",
+    dlbl(c, LM+28, y-13, "Behaviour ‚Äî what did you observe? (facts only, no interpretations)",
          11, bold=True, color=TEAL)
     y -= 20
     behs = d.get("behaviours", [])
@@ -641,7 +865,7 @@ def generate_abc_form(d: dict) -> BytesIO:
     drect(c, LM, y-20, 20, 20, fill=GREEN)
     dlbl(c, LM+10, y-13, "C", 11, bold=True, color=white, align='center')
     drect(c, LM+20, y-20, CW-20, 20, fill=LIGHT_GRN)
-    dlbl(c, LM+28, y-13, "Consequence — what happened after? What did you do?",
+    dlbl(c, LM+28, y-13, "Consequence ‚Äî what happened after? What did you do?",
          11, bold=True, color=GREEN)
     y -= 20
     resp = d.get("staff_responses_checklist", [])
@@ -686,9 +910,9 @@ def generate_abc_form(d: dict) -> BytesIO:
     c.save(); buf.seek(0); return buf
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STRATEGY REPORT PDF (Tab 2)
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# STRATEGY REPORT PDF (Tab 3)
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
 def generate_strategy_report(result: dict, client_name: str,
                               practitioner: str = "", contact: str = "") -> BytesIO:
@@ -709,7 +933,7 @@ def generate_strategy_report(result: dict, client_name: str,
         if contact:
             dlbl(c, LM+6, ft-28, contact, 9, italic=True, color=HexColor('#C8E6F5'))
         dlbl(c, W-LM, ft-14, f"Page {page_num[0]}", 9, color=HexColor('#8FC8DC'), align='right')
-        dlbl(c, W-LM, ft-28, "CONFIDENTIAL — handle in line with your privacy policy",
+        dlbl(c, W-LM, ft-28, "CONFIDENTIAL ‚Äî handle in line with your privacy policy",
              8, italic=True, color=HexColor('#5B9FC0'), align='right')
 
     def new_page():
@@ -717,7 +941,7 @@ def generate_strategy_report(result: dict, client_name: str,
         drect(c, 0, H-MINI_HDR_H, W, MINI_HDR_H, fill=DEEP_BLUE)
         drect(c, 0, H-MINI_HDR_H, 8, MINI_HDR_H, fill=TEAL)
         dlbl(c, LM+6, H-MINI_HDR_H+9,
-             f"Behaviour Strategy Recommendations — {client_name}", 10, bold=True, color=white)
+             f"Behaviour Strategy Recommendations ‚Äî {client_name}", 10, bold=True, color=white)
         return H - MINI_HDR_H - GAP
 
     def ensure(y, needed):
@@ -728,7 +952,7 @@ def generate_strategy_report(result: dict, client_name: str,
     drect(c, 0, y-HDR_H, 8, HDR_H, fill=TEAL)
     dlbl(c, LM+6, y-22, "Behaviour Strategy Recommendations", 17, bold=True, color=white)
     dlbl(c, LM+6, y-42, client_name, 13, color=HexColor('#C8E6F5'))
-    dlbl(c, LM+6, y-58, "Positive Behaviour Support — Strategy Guide for Support Workers",
+    dlbl(c, LM+6, y-58, "Positive Behaviour Support ‚Äî Strategy Guide for Support Workers",
          9, italic=True, color=HexColor('#5B9FC0'))
     dlbl(c, W-LM, y-58, f"Generated: {date.today().strftime('%d %B %Y')}",
          9, italic=True, color=HexColor('#5B9FC0'), align='right')
@@ -749,7 +973,7 @@ def generate_strategy_report(result: dict, client_name: str,
     if gen:
         gen_h = len(gen) * RH
         y = ensure(y, gen_h + SH)
-        y = sec(c, y, "General Strategies — apply across all behaviours", BLUE2)
+        y = sec(c, y, "General Strategies ‚Äî apply across all behaviours", BLUE2)
         drect(c, LM, y-gen_h, CW, gen_h, fill=LIGHT_BLUE)
         for i, item in enumerate(gen):
             drect(c, LM+10, y-9-i*RH, 7, 7, fill=BLUE2)
@@ -790,23 +1014,23 @@ def generate_strategy_report(result: dict, client_name: str,
                      bold=(dot_col == RED), color=(dot_col if dot_col == RED else DARK_TEXT))
             y -= h + 4
 
-        draw_section(pros,    "Proactive strategies — prevent this behaviour",         GREEN, LIGHT_GRN,  GREEN)
-        draw_section(reacts,  "Reactive strategies — when this behaviour occurs",       TEAL,  LIGHT_TEAL, TEAL)
-        draw_section(teaches, "Skills to build — teach as a replacement behaviour",     BLUE2, LIGHT_BLUE, BLUE2)
-        draw_section(avoids,  "DO NOT — avoid these with this behaviour",               RED,   LIGHT_RED,  RED)
+        draw_section(pros,    "Proactive strategies ‚Äî prevent this behaviour",         GREEN, LIGHT_GRN,  GREEN)
+        draw_section(reacts,  "Reactive strategies ‚Äî when this behaviour occurs",       TEAL,  LIGHT_TEAL, TEAL)
+        draw_section(teaches, "Skills to build ‚Äî teach as a replacement behaviour",     BLUE2, LIGHT_BLUE, BLUE2)
+        draw_section(avoids,  "DO NOT ‚Äî avoid these with this behaviour",               RED,   LIGHT_RED,  RED)
         y -= GAP
 
     draw_footer()
     c.save(); buf.seek(0); return buf
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 # STREAMLIT UI
-# ══════════════════════════════════════════════════════════════════════════════
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 
-st.title("📋 PBS Support Tool")
+st.title("üìã PBS Support Tool")
 
-# API key — sidebar
+# API key ‚Äî sidebar (visible from all tabs)
 try:
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 except Exception:
@@ -814,60 +1038,224 @@ except Exception:
 
 if not api_key:
     with st.sidebar:
-        st.markdown("### 🔑 API Key")
+        st.markdown("### üîë API Key")
         api_key = st.text_input(
             "Anthropic API key",
             type="password",
-            help="Get a key at console.anthropic.com",
+            help="Get a key at console.anthropic.com ‚Äî a few cents per document",
             key="api_key_input",
         )
         st.caption("Your key is never stored.")
 
-tab1, tab2 = st.tabs(["📄 Generate from PBSP", "🧠 Strategy Recommender"])
+tab1, tab2, tab3 = st.tabs([
+    "üìä Behaviour Recording",
+    "üìÑ Generate from PBSP",
+    "üß† Strategy Recommender",
+])
 
 
-# ── TAB 1 ─────────────────────────────────────────────────────────────────────
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# TAB 1 ‚Äî BEHAVIOUR RECORDING ANALYSIS
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
 with tab1:
     st.markdown(
+        "Upload the completed **30-day behaviour recording** from families or caregivers. "
+        "The tool extracts the behaviours of concern, identifies patterns and triggers, "
+        "and summarises what strategies carers have already been trying."
+    )
+    st.info(
+        "**Using Microsoft Forms?** Open your form ‚Üí Responses ‚Üí "
+        "click the Excel icon to download responses. Upload that file here.",
+        icon="üìä",
+    )
+    st.divider()
+
+    accept_types = ["xlsx", "pdf", "docx"] if EXCEL_AVAILABLE else ["pdf", "docx"]
+    if not EXCEL_AVAILABLE:
+        st.warning("Excel (.xlsx) support requires openpyxl ‚Äî install it to enable Microsoft Forms exports.")
+
+    rec_file = st.file_uploader(
+        "Upload 30-day behaviour recording",
+        type=accept_types,
+        key="rec_upload",
+        help="Excel export from Microsoft Forms (.xlsx), Word (.docx), or PDF"
+    )
+    rec_btn = st.button(
+        "Analyse recording", type="primary",
+        disabled=not (rec_file and api_key), key="rec_analyse"
+    )
+
+    if rec_btn and rec_file and api_key:
+        with st.spinner("Reading recording‚Ä¶"):
+            fb   = rec_file.read()
+            name = rec_file.name.lower()
+            if name.endswith(".xlsx"):
+                rec_text = extract_text_from_excel(fb)
+            elif name.endswith(".docx"):
+                rec_text = extract_text_from_docx(fb)
+            else:
+                rec_text = extract_text_from_pdf(fb)
+
+            if not rec_text.strip():
+                st.error("Could not extract text from this file. Try saving as PDF or Word and re-uploading.")
+                st.stop()
+
+        with st.spinner("Analysing behaviour data‚Ä¶"):
+            try:
+                rec_data = extract_behaviour_recording(rec_text, api_key)
+                st.session_state["t0_data"] = rec_data
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+                st.stop()
+
+        n_beh = len(rec_data.get("behaviours", []))
+        st.success(
+            f"‚úÖ  Recording analysed ‚Äî "
+            f"**{rec_data.get('total_incidents', '?')} incidents** across "
+            f"**{n_beh} behaviour{'s' if n_beh != 1 else ''}**"
+        )
+
+    if "t0_data" in st.session_state:
+        rec_data = st.session_state["t0_data"]
+        st.divider()
+
+        # ‚îÄ‚îÄ Summary metrics ‚îÄ‚îÄ
+        total = rec_data.get("total_incidents", "‚Äî")
+        n_beh = len(rec_data.get("behaviours", []))
+        period = rec_data.get("recording_period") or "30 days"
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("Total incidents", total)
+        with col2: st.metric("Behaviours identified", n_beh)
+        with col3: st.metric("Period", period)
+
+        # ‚îÄ‚îÄ Behaviours ‚îÄ‚îÄ
+        behs = rec_data.get("behaviours", [])
+        if behs:
+            st.markdown("##### Behaviours identified")
+            t = rec_data.get("total_incidents") or sum(b.get("frequency", 0) for b in behs) or 1
+            for b in behs:
+                freq = b.get("frequency", 0)
+                pct  = round(freq / t * 100) if t else 0
+                with st.expander(f"**{b.get('label', 'Behaviour')}** ‚Äî {freq} incidents ({pct}%)"):
+                    if b.get("carer_description"):
+                        st.markdown(f"*Carers described: {b['carer_description']}*")
+                    for d_ in b.get("descriptors", []):
+                        st.markdown(f"- {d_}")
+
+        # ‚îÄ‚îÄ Patterns ‚îÄ‚îÄ
+        patterns = rec_data.get("patterns", {})
+        all_patterns = (
+            patterns.get("time_of_day", []) +
+            patterns.get("day_of_week", []) +
+            patterns.get("settings",    []) +
+            patterns.get("other",       [])
+        )
+        if all_patterns:
+            st.markdown("##### Patterns observed")
+            for p in all_patterns:
+                st.markdown(f"- {p}")
+
+        # ‚îÄ‚îÄ Triggers ‚îÄ‚îÄ
+        triggers = rec_data.get("triggers", [])
+        if triggers:
+            st.markdown("##### Triggers noted by carers")
+            for t_ in triggers:
+                st.markdown(f"- {t_}")
+
+        # ‚îÄ‚îÄ Carer responses ‚îÄ‚îÄ
+        responses = rec_data.get("carer_responses", [])
+        if responses:
+            st.markdown("##### Strategies carers have been using")
+            for r in responses:
+                st.markdown(f"- {r}")
+
+        # ‚îÄ‚îÄ Concerns & notes ‚îÄ‚îÄ
+        if rec_data.get("carer_concerns"):
+            st.info(f"**Carer concerns:** {rec_data['carer_concerns']}")
+        notes = rec_data.get("notes_for_practitioner", [])
+        if notes:
+            with st.expander("‚ö†Ô∏è Notes for PBS Practitioner"):
+                for n in notes:
+                    st.markdown(f"- {n}")
+
+        st.divider()
+
+        # ‚îÄ‚îÄ Download PDF report ‚îÄ‚îÄ
+        with st.spinner("Building analysis report‚Ä¶"):
+            try:
+                rep_buf = generate_recording_report(rec_data)
+            except Exception as e:
+                st.error(f"Report error: {e}"); st.stop()
+
+        safe = (rec_data.get("client_name") or "Client").replace(" ", "_")
+        st.download_button(
+            "üì• Download analysis report (PDF)", rep_buf,
+            f"{safe}_Behaviour_Recording_Analysis.pdf",
+            "application/pdf", use_container_width=True,
+        )
+        st.caption(
+            "Take this analysis to your next meeting with the family to confirm and refine. "
+            "Switch to the **Strategy Recommender** tab to generate strategies based on this recording."
+        )
+
+        if st.button("üóë Clear recording data", key="rec_clear"):
+            del st.session_state["t0_data"]
+            st.rerun()
+
+    elif not rec_file:
+        st.caption("Supported: Excel (.xlsx from Microsoft Forms), Word (.docx), PDF")
+
+    st.divider()
+    st.caption(
+        "Recording data is processed in memory only and never stored permanently. "
+        "Handle all client information in line with your organisation's privacy policy."
+    )
+
+
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# TAB 2 ‚Äî GENERATE FROM PBSP
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+with tab2:
+    st.markdown(
         "Upload a client's **Positive Behaviour Support Plan** (PDF or Word) and this tool "
-        "will generate a **support reference card** and an **ABC recording form** — "
+        "will generate a **support reference card** and an **ABC recording form** ‚Äî "
         "both pre-populated with the client's specific information."
     )
     st.divider()
 
     uploaded = st.file_uploader("Upload PBSP (PDF or Word .docx)", type=["pdf","docx"])
     gen_btn  = st.button("Generate documents", type="primary",
-                         disabled=not (uploaded and api_key), key="gen_tab1")
+                         disabled=not (uploaded and api_key), key="gen_tab2")
 
     if gen_btn and uploaded and api_key:
-        with st.spinner("Reading plan…"):
+        with st.spinner("Reading plan‚Ä¶"):
             fb = uploaded.read()
             pbsp_text = extract_text_from_docx(fb) if uploaded.name.lower().endswith(".docx") \
                         else extract_text_from_pdf(fb)
 
-        with st.spinner("Extracting client information…"):
+        with st.spinner("Extracting client information‚Ä¶"):
             try:   data = extract_client_data(pbsp_text, api_key)
             except Exception as e: st.error(f"Extraction failed: {e}"); st.stop()
 
-        with st.spinner("Generating PDFs…"):
+        with st.spinner("Generating PDFs‚Ä¶"):
             try:
                 card_buf = generate_support_card(data)
                 abc_buf  = generate_abc_form(data)
             except Exception as e: st.error(f"PDF error: {e}"); st.stop()
 
-        st.session_state["t1_data"] = data
-        st.success(f"✅  Documents generated for **{data.get('name','client')}**")
+        st.session_state["t1_data"] = data   # share with Tab 3
+        st.success(f"‚úÖ  Documents generated for **{data.get('name','client')}**")
         st.divider()
         safe = data.get("name","client").replace(" ","_")
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("#### 📄 Support Reference Card")
-            st.markdown("One-page quick reference — print and laminate.")
+            st.markdown("#### üìÑ Support Reference Card")
+            st.markdown("One-page quick reference ‚Äî print and laminate.")
             st.download_button("Download support card (PDF)", card_buf,
                                f"{safe}_Support_Card.pdf", "application/pdf",
                                use_container_width=True)
         with c2:
-            st.markdown("#### 📋 ABC Recording Form")
+            st.markdown("#### üìã ABC Recording Form")
             st.markdown("Pre-populated with this client's behaviours.")
             st.download_button("Download ABC form (PDF)", abc_buf,
                                f"{safe}_ABC_Form.pdf", "application/pdf",
@@ -880,21 +1268,28 @@ with tab1:
                "Handle all client documents in line with your organisation's privacy policy.")
 
 
-# ── TAB 2 ─────────────────────────────────────────────────────────────────────
-with tab2:
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+# TAB 3 ‚Äî STRATEGY RECOMMENDER
+# ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
+with tab3:
     st.markdown(
-        "Describe a client's behaviours and this tool will select the most appropriate strategies "
-        "from the **Hoggs Health Hub PBS Strategy Library** and generate a **printable strategy report**."
+        "Upload a client's PBSP and your **strategy library** ‚Äî the tool will match the most "
+        "appropriate strategies from your library to this client's behaviours and generate a "
+        "**printable strategy report**."
     )
     st.divider()
 
-    # ── STEP 1: Client source ─────────────────────────────────────────────────
-    st.markdown("#### Step 1 — Client information")
+    # ‚îÄ‚îÄ STEP 1: Client source ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+    st.markdown("#### Step 1 ‚Äî Client information")
 
-    source_opts = ["📄 Upload a PBSP (auto-extract)", "✏️ Enter manually"]
+    source_opts = ["üìÑ Upload a PBSP (auto-extract)", "‚úèÔ∏è Enter manually"]
     if "t1_data" in st.session_state:
         source_opts.insert(0,
-            f"♻️ Use client from Tab 1 ({st.session_state['t1_data'].get('name','')})")
+            f"‚ôªÔ∏è Use PBSP from Tab 2 ({st.session_state['t1_data'].get('name','')})")
+    if "t0_data" in st.session_state:
+        rec_name = st.session_state["t0_data"].get("client_name") or "client"
+        source_opts.insert(0, f"üìä Use behaviour recording from Tab 1 ({rec_name})")
+
     src = st.radio("Where is the client information coming from?",
                    source_opts, key="sr_src", horizontal=True)
 
@@ -903,10 +1298,31 @@ with tab2:
     freetext_value = ""
 
     src = src or source_opts[0]
-    if src.startswith("♻️"):
+
+    if src.startswith("üìä"):
+        # ‚îÄ‚îÄ use behaviour recording from Tab 1 ‚îÄ‚îÄ
+        t0 = st.session_state["t0_data"]
+        client_info, valid_behs = recording_to_sr_format(t0)
+        rec_name = t0.get("client_name") or "Client"
+        period   = t0.get("recording_period") or "30-day recording"
+        st.success(f"‚úÖ  Using behaviour recording for **{rec_name}** ({period})")
+        st.info(
+            f"**{t0.get('total_incidents', '?')} incidents** recorded across "
+            f"**{len(valid_behs)} behaviour(s)**. "
+            "Add diagnosis and communication details in the report footer if known."
+        )
+        with st.expander("View behaviours from recording"):
+            for b in t0.get("behaviours", []):
+                st.markdown(
+                    f"- **{b.get('label', '')}** ({b.get('frequency', '?')} incidents): "
+                    f"{b.get('carer_description', '')}"
+                )
+
+    elif src.startswith("‚ôªÔ∏è"):
+        # ‚îÄ‚îÄ reuse Tab 2 PBSP extraction ‚îÄ‚îÄ
         t1 = st.session_state["t1_data"]
         client_info, valid_behs = pbsp_to_sr_format(t1)
-        st.success(f"✅  Using: **{t1.get('name','')}** — {t1.get('age_info','')}")
+        st.success(f"‚úÖ  Using: **{t1.get('name','')}** ‚Äî {t1.get('age_info','')}")
         with st.expander("View extracted profile and behaviours"):
             cols = st.columns(2)
             with cols[0]:
@@ -916,42 +1332,44 @@ with tab2:
                 for a in t1.get("about",[]): st.markdown(f"- {a}")
             with cols[1]:
                 st.markdown("**Behaviours of concern:**")
-                for b in t1.get("behaviours",[]): st.markdown(f"- **{b.get('label','')}:** " +
-                    ", ".join(b.get("descriptors",[])))
+                for b in t1.get("behaviours",[]): st.markdown(
+                    f"- **{b.get('label','')}:** " + ", ".join(b.get("descriptors",[])))
                 st.markdown("**Triggers:**")
-                for t in t1.get("triggers",[]): st.markdown(f"- {t}")
+                for t_ in t1.get("triggers",[]): st.markdown(f"- {t_}")
 
-    elif src.startswith("📄"):
+    elif src.startswith("üìÑ"):
+        # ‚îÄ‚îÄ upload PBSP for Tab 3 ‚îÄ‚îÄ
         sr_pbsp_file = st.file_uploader("Upload client's PBSP (PDF or Word)",
                                          type=["pdf","docx"], key="sr_pbsp_upload")
         if sr_pbsp_file:
             if st.button("Extract client information", type="secondary", key="sr_pbsp_extract"):
                 if not api_key:
-                    st.error("API key required — enter it in the sidebar.")
+                    st.error("API key required ‚Äî enter it in the sidebar.")
                 else:
-                    with st.spinner("Extracting from PBSP…"):
+                    with st.spinner("Extracting from PBSP‚Ä¶"):
                         fb = sr_pbsp_file.read()
                         txt = extract_text_from_docx(fb) if sr_pbsp_file.name.lower().endswith(".docx") \
                               else extract_text_from_pdf(fb)
                         try:
                             extracted = extract_client_data(txt, api_key)
                             st.session_state["sr_pbsp_data"] = extracted
-                            st.success(f"✅  Extracted: {extracted.get('name','')}")
+                            st.success(f"‚úÖ  Extracted: {extracted.get('name','')}")
                         except Exception as e:
                             st.error(f"Extraction failed: {e}")
 
         if "sr_pbsp_data" in st.session_state:
             pd_ = st.session_state["sr_pbsp_data"]
             client_info, valid_behs = pbsp_to_sr_format(pd_)
-            st.info(f"Using extracted data for **{pd_.get('name','')}** — "
+            st.info(f"Using extracted data for **{pd_.get('name','')}** ‚Äî "
                     f"{len(valid_behs)} behaviour(s) found.")
             with st.expander("View extracted behaviours"):
                 for b in pd_.get("behaviours",[]): st.markdown(
                     f"- **{b.get('label','')}:** " + ", ".join(b.get("descriptors",[])))
-            if st.button("🗑 Clear extracted data", key="sr_pbsp_clear"):
+            if st.button("üóë Clear extracted data", key="sr_pbsp_clear"):
                 del st.session_state["sr_pbsp_data"]; st.rerun()
 
     else:
+        # ‚îÄ‚îÄ manual entry ‚îÄ‚îÄ
         ca, cb = st.columns(2)
         with ca:
             sr_name = st.text_input("Client name *", key="sr_name",
@@ -959,29 +1377,31 @@ with tab2:
             sr_age  = st.text_input("Age", key="sr_age", placeholder="e.g. 24")
         with cb:
             sr_diag  = st.text_input("Diagnosis / condition", key="sr_diag",
-                                      placeholder="e.g. Autism Spectrum Disorder, ABI")
+                                      placeholder="e.g. Autism Spectrum Disorder, FASD, ABI")
             sr_comms = st.selectbox("Communication level", key="sr_comms",
                                      options=["Verbal","Limited verbal","Non-verbal","Uses AAC device"])
         sr_other = st.text_area("Other relevant context (optional)", key="sr_other", height=75,
-                                 placeholder="e.g. Routines are very important, history of trauma…")
+                                 placeholder="e.g. Routines are very important, history of trauma‚Ä¶")
 
         st.markdown("**Behaviours of concern**")
         entry_style = st.radio(
             "How would you like to describe the behaviours?",
-            ["📝 Describe in your own words", "📋 Structured entry"],
+            ["üìù Describe in your own words", "üìã Structured entry"],
             key="sr_entry_style", horizontal=True,
         )
 
-        if (entry_style or "").startswith("📝"):
+        if (entry_style or "").startswith("üìù"):
             sr_freetext = st.text_area(
-                "Describe what you've observed — write naturally",
+                "Describe what you've observed ‚Äî write naturally",
                 key="sr_freetext",
                 height=160,
                 placeholder=(
-                    "Write however feels natural — describe what you see, when it happens, "
-                    "and what seems to set it off.\n\n"
+                    "Write however feels natural ‚Äî describe what you see, when it happens, "
+                    "and what seems to set it off. The tool will identify the behaviours, "
+                    "assign clinical labels, and develop strategies.\n\n"
                     "e.g. 'Alex hits out at staff when demands are placed, especially during "
-                    "transitions. He also bangs his head when frustrated or overwhelmed.'"
+                    "transitions. He also bangs his head on surfaces when he's frustrated or "
+                    "overwhelmed. Sometimes he shouts and swears when things don't go his way.'"
                 ),
             )
             freetext_value = (sr_freetext or "").strip()
@@ -1006,17 +1426,17 @@ with tab2:
                     bn = st.text_input("Behaviour name / label", key=f"sr_bn_{i}",
                                         placeholder="e.g. Physical aggression, Self-injurious behaviour")
                     bd = st.text_area("Describe what it looks like", key=f"sr_bd_{i}", height=70,
-                                       placeholder="e.g. Hitting out, throwing objects")
+                                       placeholder="e.g. Hitting out, throwing objects ‚Äî lasts 2‚Äì5 minutes")
                     bt = st.text_area("Known triggers / when it tends to occur", key=f"sr_bt_{i}", height=70,
                                        placeholder="e.g. When demands are placed, during transitions")
                     beh_raw.append({"name": bn or "", "description": bd or "", "triggers": bt or ""})
 
             caddbtn, crmbtn = st.columns(2)
             with caddbtn:
-                if st.session_state.sr_n < 5 and st.button("＋ Add another behaviour", key="sr_add"):
+                if st.session_state.sr_n < 5 and st.button("Ôºã Add another behaviour", key="sr_add"):
                     st.session_state.sr_n += 1; st.rerun()
             with crmbtn:
-                if st.session_state.sr_n > 1 and st.button("− Remove last", key="sr_rm"):
+                if st.session_state.sr_n > 1 and st.button("‚àí Remove last", key="sr_rm"):
                     st.session_state.sr_n -= 1; st.rerun()
 
             valid_behs = [b for b in beh_raw if b["name"].strip()]
@@ -1031,58 +1451,82 @@ with tab2:
 
     st.divider()
 
-    # ── STEP 2: Strategy library — always embedded, override optional ──────────
-    st.markdown("#### Step 2 — Strategy library")
+    # ‚îÄ‚îÄ STEP 2: Strategy library ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+    st.markdown("#### Step 2 ‚Äî Your strategy library")
 
-    # Show built-in library confirmation
-    lib_word_count = len(EMBEDDED_LIBRARY.split())
-    st.success(
-        f"✅  **Built-in library loaded:** Hoggs Health Hub PBS Strategy Library "
-        f"({lib_word_count:,} words) — strategies will always be selected from this library."
+    builtin_lib_text, builtin_lib_name = load_builtin_library()
+
+    sr_lib_file = st.file_uploader(
+        "Upload a different library for this session (optional)",
+        type=["pdf","docx"], key="sr_lib_upload",
+        help="Overrides the built-in library for this session only",
+    ) if builtin_lib_text else st.file_uploader(
+        "Upload strategy library (PDF or Word)", type=["pdf","docx"], key="sr_lib_upload",
+        help="Strategies, clinical guidelines, PBS manuals ‚Äî any document with your approved strategies",
     )
 
-    # Allow optional override for this session
-    with st.expander("Upload a different library for this session (optional)"):
-        sr_lib_file = st.file_uploader(
-            "Upload alternative strategy library (PDF or Word)",
-            type=["pdf","docx"], key="sr_lib_upload",
-        )
-        if sr_lib_file:
-            fb = sr_lib_file.read()
-            uploaded_lib_text = extract_text_from_docx(fb) if sr_lib_file.name.lower().endswith(".docx") \
-                            else extract_text_from_pdf(fb)
-            st.session_state["sr_lib_text"] = uploaded_lib_text
-            st.session_state["sr_lib_name"] = sr_lib_file.name
-            wc = len(uploaded_lib_text.split())
-            st.success(f"✅  Override library loaded: **{sr_lib_file.name}** ({wc:,} words)")
+    if sr_lib_file:
+        fb = sr_lib_file.read()
+        uploaded_text = extract_text_from_docx(fb) if sr_lib_file.name.lower().endswith(".docx") \
+                        else extract_text_from_pdf(fb)
+        st.session_state["sr_lib_text"]     = uploaded_text
+        st.session_state["sr_lib_name"]     = sr_lib_file.name
+        st.session_state["sr_lib_uploaded"] = True
 
-        if "sr_lib_text" in st.session_state:
-            if st.button("↩ Revert to built-in library", key="sr_lib_revert"):
-                del st.session_state["sr_lib_text"]
-                del st.session_state["sr_lib_name"]
-                st.rerun()
-
-    # Resolve effective library
     if "sr_lib_text" in st.session_state:
         effective_lib_text = st.session_state["sr_lib_text"]
         effective_lib_name = st.session_state["sr_lib_name"]
+        is_uploaded_override = st.session_state.get("sr_lib_uploaded", False)
+        word_count = len(effective_lib_text.split())
+        if is_uploaded_override and builtin_lib_text:
+            st.success(
+                f"‚úÖ  Using uploaded library: **{effective_lib_name}** ({word_count:,} words)"
+                f" ‚Äî overriding built-in library for this session."
+            )
+            if st.button("‚Ü© Revert to built-in library", key="sr_lib_revert"):
+                del st.session_state["sr_lib_text"]
+                del st.session_state["sr_lib_name"]
+                del st.session_state["sr_lib_uploaded"]
+                st.rerun()
+        elif is_uploaded_override:
+            st.success(f"‚úÖ  Library loaded: **{effective_lib_name}** ({word_count:,} words)")
+            if st.button("üóë Clear library", key="sr_lib_clear"):
+                del st.session_state["sr_lib_text"]
+                del st.session_state["sr_lib_name"]
+                del st.session_state["sr_lib_uploaded"]
+                st.rerun()
+        else:
+            pass
+    elif builtin_lib_text:
+        effective_lib_text = builtin_lib_text
+        effective_lib_name = builtin_lib_name
+        word_count = len(builtin_lib_text.split())
+        st.success(
+            f"‚úÖ  **Built-in strategy library:** {builtin_lib_name} ({word_count:,} words) "
+            f"‚Äî always available, no upload needed."
+        )
     else:
-        effective_lib_text = EMBEDDED_LIBRARY
-        effective_lib_name = "Hoggs Health Hub PBS Strategy Library"
+        effective_lib_text = None
+        effective_lib_name = None
+        st.markdown(
+            "> üí° **No strategy library loaded.** Claude will generate evidence-based strategies. "
+            "To use your own library permanently, add a file named `strategy_library.docx` "
+            "(or `.pdf`) to your GitHub repository ‚Äî it will load automatically for everyone."
+        )
 
     st.divider()
 
-    # ── STEP 3: Report footer ─────────────────────────────────────────────────
-    st.markdown("#### Step 3 — Report footer (optional)")
+    # ‚îÄ‚îÄ STEP 3: Report footer ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+    st.markdown("#### Step 3 ‚Äî Report footer (optional)")
     cp, cc = st.columns(2)
     with cp: sr_prac    = st.text_input("Your name / title", key="sr_prac",
-                                         placeholder="e.g. Janine Hogg — PBS Practitioner")
+                                         placeholder="e.g. Janine Hogg ‚Äî PBS Practitioner")
     with cc: sr_contact = st.text_input("Contact email", key="sr_contact",
-                                         placeholder="e.g. janine@hoggshealthhub.com.au")
+                                         placeholder="e.g. janine@org.com.au")
 
     st.divider()
 
-    # ── GENERATE ──────────────────────────────────────────────────────────────
+    # ‚îÄ‚îÄ GENERATE ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
     can_go  = bool(client_info and valid_behs and api_key)
     rec_btn = st.button("Generate strategy recommendations", type="primary",
                          disabled=not can_go, key="sr_gen")
@@ -1098,9 +1542,18 @@ with tab2:
         client_label  = client_info.get("name", "client")
         is_freetext   = bool(valid_behs and valid_behs[0].get("_freetext"))
 
-        spinner_msg = (
-            f"Matching strategies from {lib_label} for {client_label}…"
-        )
+        if is_freetext:
+            spinner_msg = (
+                f"Reading your description and matching strategies for {client_label}‚Ä¶"
+                if library_text else
+                f"Reading your description and developing strategies for {client_label}‚Ä¶"
+            )
+        else:
+            spinner_msg = (
+                f"Matching strategies from your library for {client_label}‚Ä¶"
+                if library_text else
+                f"Generating evidence-based strategies for {client_label}‚Ä¶"
+            )
 
         with st.spinner(spinner_msg):
             try:
@@ -1112,7 +1565,8 @@ with tab2:
             except Exception as e:
                 st.error(f"Could not generate recommendations: {e}"); st.stop()
 
-        st.success(f"✅  Recommendations generated for **{client_label}** from **{lib_label}**")
+        source_note = f" (matched from **{lib_label}**)" if lib_label else ""
+        st.success(f"‚úÖ  Recommendations generated for **{client_label}**{source_note}")
         st.divider()
 
         if result.get("client_summary"):
@@ -1120,7 +1574,7 @@ with tab2:
 
         gen_s = result.get("general_strategies", [])
         if gen_s:
-            st.markdown("##### General strategies — apply across all behaviours")
+            st.markdown("##### General strategies ‚Äî apply across all behaviours")
             for s in gen_s: st.markdown(f"- {s}")
 
         for beh in result.get("behaviours", []):
@@ -1158,7 +1612,7 @@ with tab2:
                     for s in beh["avoid"]: st.markdown(f"- {s}")
 
         st.divider()
-        with st.spinner("Building PDF report…"):
+        with st.spinner("Building PDF report‚Ä¶"):
             try:
                 report_buf = generate_strategy_report(
                     result, client_label,
@@ -1166,13 +1620,14 @@ with tab2:
             except Exception as e: st.error(f"PDF error: {e}"); st.stop()
 
         st.download_button(
-            "📥 Download strategy report (PDF)", report_buf,
+            "üì• Download strategy report (PDF)", report_buf,
             f"{client_label.replace(' ','_')}_Strategy_Report.pdf",
             "application/pdf", use_container_width=True)
 
     st.divider()
     st.caption(
-        "Recommendations are AI-generated and selected from the Hoggs Health Hub PBS Strategy Library. "
-        "Always review before implementing. "
+        "Recommendations are AI-generated. Always review before implementing. "
+        "When a strategy library is uploaded, Claude selects from that document ‚Äî "
+        "verify that selected strategies are appropriate for this individual. "
         "This tool complements but does not replace a formal Behaviour Support Plan."
     )
