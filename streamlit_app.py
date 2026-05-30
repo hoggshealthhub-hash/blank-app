@@ -7,9 +7,11 @@ Tab 3: 🧠 Strategy Recommender — behaviours → AI strategy recommendations 
 
 import json
 import os
+import time
 from datetime import date
 import streamlit as st
 import anthropic
+import requests
 from io import BytesIO
 from docx import Document as DocxDocument
 from pypdf import PdfReader
@@ -2099,15 +2101,196 @@ def _sp_row(label: str, rating: str) -> list:
 # STREAMLIT UI
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# GUMROAD LICENCE GATE
+# ══════════════════════════════════════════════════════════════════════════════
+
+GUMROAD_VERIFY_URL = "https://api.gumroad.com/v2/licenses/verify"
+
+
+def verify_gumroad_license(license_key: str, product_ids: list,
+                            increment: bool = False) -> dict:
+    """Verify a Gumroad licence key against one or more configured products.
+    Returns a dict with 'valid' and (when valid) product/subscription details."""
+    if not license_key or not product_ids:
+        return {"valid": False, "error": "Missing licence key or product configuration."}
+    key = license_key.strip()
+    last_err = "Licence key not recognised."
+    for pid in product_ids:
+        try:
+            r = requests.post(
+                GUMROAD_VERIFY_URL,
+                data={
+                    "product_id": pid,
+                    "license_key": key,
+                    "increment_uses_count": "true" if increment else "false",
+                },
+                timeout=12,
+            )
+            data = r.json() if r.content else {}
+        except Exception as e:
+            last_err = f"Could not reach Gumroad ({e}). Try again."
+            continue
+        if not data.get("success"):
+            last_err = data.get("message", "Licence key not recognised for this product.")
+            continue
+        purchase = data.get("purchase", {}) or {}
+        if purchase.get("refunded"):
+            return {"valid": False, "error": "This licence has been refunded."}
+        if purchase.get("disputed"):
+            return {"valid": False, "error": "This licence is currently disputed."}
+        if purchase.get("chargebacked"):
+            return {"valid": False, "error": "This licence has been charged back."}
+        # Subscription health checks
+        if purchase.get("subscription_id"):
+            if purchase.get("subscription_cancelled_at"):
+                return {"valid": False, "error": "Subscription has been cancelled."}
+            if purchase.get("subscription_failed_at"):
+                return {"valid": False, "error": "Subscription payment failed — please update billing."}
+            if purchase.get("subscription_ended_at"):
+                return {"valid": False, "error": "Subscription has ended."}
+        return {
+            "valid":            True,
+            "product":          purchase.get("product_name", "PBS Support Tool"),
+            "purchaser_email":  purchase.get("email", ""),
+            "purchaser_name":   purchase.get("full_name") or purchase.get("purchaser_id", ""),
+            "uses":             data.get("uses", 0),
+            "recurrence":       purchase.get("recurrence"),
+            "subscription_id":  purchase.get("subscription_id"),
+            "is_subscription":  bool(purchase.get("subscription_id")),
+            "sale_id":          purchase.get("sale_id"),
+            "sale_timestamp":   purchase.get("sale_timestamp"),
+            "product_id_matched": pid,
+        }
+    return {"valid": False, "error": last_err}
+
+
+def _load_gumroad_config():
+    """Read Gumroad config from Streamlit secrets. Returns (product_ids, revoked_keys, purchase_url, dev_mode)."""
+    try:
+        product_ids = st.secrets.get("GUMROAD_PRODUCT_IDS", [])
+        if isinstance(product_ids, str):
+            product_ids = [p.strip() for p in product_ids.split(",") if p.strip()]
+        revoked = st.secrets.get("REVOKED_KEYS", [])
+        if isinstance(revoked, str):
+            revoked = [r.strip() for r in revoked.split(",") if r.strip()]
+        purchase_url = st.secrets.get("GUMROAD_PURCHASE_URL", "")
+        dev_mode = bool(st.secrets.get("DEV_MODE", False))
+    except Exception:
+        product_ids, revoked, purchase_url, dev_mode = [], [], "", False
+    return list(product_ids), list(revoked), purchase_url, dev_mode
+
+
+_GUMROAD_PRODUCT_IDS, _REVOKED_KEYS, _PURCHASE_URL, _DEV_MODE = _load_gumroad_config()
+LICENCE_REQUIRED = bool(_GUMROAD_PRODUCT_IDS) and not _DEV_MODE
+
+
+# Check for revoked licence each load
+if (LICENCE_REQUIRED
+    and st.session_state.get("license_key") in _REVOKED_KEYS):
+    for k in ("license_valid", "license_info", "license_key", "license_last_verify"):
+        st.session_state.pop(k, None)
+
+
+# ── Licence gate UI ────────────────────────────────────────────────────────────
+if LICENCE_REQUIRED and not st.session_state.get("license_valid"):
+    st.title("📋 PBS Support Tool")
+    st.markdown("### 🔐 Subscription required")
+    st.markdown(
+        "This tool requires an **active subscription** to access. "
+        "Please enter your licence key below."
+    )
+
+    if _PURCHASE_URL:
+        st.info(f"Don't have a subscription yet? [Subscribe here]({_PURCHASE_URL}) to get a licence key.")
+
+    with st.form("licence_form", clear_on_submit=False):
+        entered_key = st.text_input(
+            "Licence key",
+            type="password",
+            placeholder="e.g. ABC123-DEF456-GHI789-JKL012",
+            help="You'll find your licence key in your Gumroad receipt email."
+        )
+        submitted = st.form_submit_button("Activate", type="primary", use_container_width=True)
+
+    if submitted:
+        if not entered_key.strip():
+            st.error("Please enter your licence key.")
+        elif entered_key.strip() in _REVOKED_KEYS:
+            st.error("This licence has been revoked. Please contact support.")
+        else:
+            with st.spinner("Verifying your licence…"):
+                result = verify_gumroad_license(
+                    entered_key, _GUMROAD_PRODUCT_IDS, increment=False
+                )
+            if result["valid"]:
+                st.session_state["license_valid"] = True
+                st.session_state["license_info"] = result
+                st.session_state["license_key"] = entered_key.strip()
+                st.session_state["license_last_verify"] = time.time()
+                st.success(f"✅ Licence verified — welcome!")
+                st.rerun()
+            else:
+                st.error(f"❌ {result.get('error', 'Licence could not be verified.')}")
+
+    st.divider()
+    st.caption(
+        "Your licence is tied to an active subscription. If your subscription is cancelled "
+        "or payment fails, your access will be suspended. Contact support if you believe "
+        "this is an error."
+    )
+    st.stop()
+
+
+# Periodic re-verification (every 12 hours) to catch cancellations
+if LICENCE_REQUIRED and st.session_state.get("license_valid"):
+    last = st.session_state.get("license_last_verify", 0)
+    if time.time() - last > 12 * 3600:
+        key = st.session_state.get("license_key", "")
+        result = verify_gumroad_license(key, _GUMROAD_PRODUCT_IDS, increment=False)
+        if result["valid"]:
+            st.session_state["license_info"] = result
+            st.session_state["license_last_verify"] = time.time()
+        else:
+            for k in ("license_valid", "license_info", "license_key", "license_last_verify"):
+                st.session_state.pop(k, None)
+            st.error("Your subscription is no longer active. Please re-enter a valid licence.")
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APP UI
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.title("📋 PBS Support Tool")
 
-# API key — sidebar (visible from all tabs)
+# ── Licence info in sidebar ────────────────────────────────────────────────────
+if LICENCE_REQUIRED and st.session_state.get("license_valid"):
+    info = st.session_state.get("license_info", {})
+    with st.sidebar:
+        st.markdown("### ✅ Active Subscription")
+        st.markdown(f"**Product:** {info.get('product', '—')}")
+        if info.get("purchaser_email"):
+            st.caption(f"Registered to: {info['purchaser_email']}")
+        if info.get("recurrence"):
+            st.markdown(f"**Plan:** {info['recurrence'].title()}")
+        if info.get("uses") is not None:
+            st.caption(f"Total verifications: {info.get('uses', 0)}")
+        st.divider()
+        if st.button("Sign out", key="licence_signout", use_container_width=True):
+            for k in ("license_valid", "license_info", "license_key", "license_last_verify"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+
+# API key — always from secrets in production
 try:
     api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 except Exception:
     api_key = ""
 
-if not api_key:
+# In licensed mode, never expose API key entry — it must come from secrets
+if not api_key and not LICENCE_REQUIRED:
     with st.sidebar:
         st.markdown("### 🔑 API Key")
         api_key = st.text_input(
@@ -2117,6 +2300,12 @@ if not api_key:
             key="api_key_input",
         )
         st.caption("Your key is never stored.")
+elif not api_key and LICENCE_REQUIRED:
+    st.error(
+        "⚠️ Service configuration error: AI processing is not configured. "
+        "Please contact support."
+    )
+    st.stop()
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Behaviour Recording",
