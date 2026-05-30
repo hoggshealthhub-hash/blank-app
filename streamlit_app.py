@@ -2178,13 +2178,23 @@ def _load_gumroad_config():
         if isinstance(founder, str):
             founder = [f.strip() for f in founder.split(",") if f.strip()]
         purchase_url = st.secrets.get("GUMROAD_PURCHASE_URL", "")
+        purchase_options = st.secrets.get("GUMROAD_PURCHASE_OPTIONS", [])
+        # Coerce options into list of dicts {label, url, blurb}
+        if purchase_options:
+            try:
+                purchase_options = list(purchase_options)
+            except Exception:
+                purchase_options = []
         dev_mode = bool(st.secrets.get("DEV_MODE", False))
     except Exception:
         product_ids, revoked, founder, purchase_url, dev_mode = [], [], [], "", False
-    return list(product_ids), list(revoked), list(founder), purchase_url, dev_mode
+        purchase_options = []
+    return (list(product_ids), list(revoked), list(founder),
+            purchase_url, list(purchase_options), dev_mode)
 
 
-_GUMROAD_PRODUCT_IDS, _REVOKED_KEYS, _FOUNDER_KEYS, _PURCHASE_URL, _DEV_MODE = _load_gumroad_config()
+(_GUMROAD_PRODUCT_IDS, _REVOKED_KEYS, _FOUNDER_KEYS,
+ _PURCHASE_URL, _PURCHASE_OPTIONS, _DEV_MODE) = _load_gumroad_config()
 LICENCE_REQUIRED = bool(_GUMROAD_PRODUCT_IDS) and not _DEV_MODE
 
 
@@ -2204,7 +2214,31 @@ if LICENCE_REQUIRED and not st.session_state.get("license_valid"):
         "Please enter your licence key below."
     )
 
-    if _PURCHASE_URL:
+    if _PURCHASE_OPTIONS:
+        st.markdown("##### Don't have a subscription yet? Choose a plan:")
+        opt_cols = st.columns(len(_PURCHASE_OPTIONS))
+        for i, opt in enumerate(_PURCHASE_OPTIONS):
+            try:
+                label = opt.get("label", "Subscribe")
+                url   = opt.get("url",   "#")
+                blurb = opt.get("blurb", "")
+            except AttributeError:
+                # opt might be a list/tuple [label, url, blurb]
+                label = opt[0] if len(opt) > 0 else "Subscribe"
+                url   = opt[1] if len(opt) > 1 else "#"
+                blurb = opt[2] if len(opt) > 2 else ""
+            with opt_cols[i]:
+                st.markdown(
+                    f"<a href='{url}' target='_blank' style='"
+                    f"display:block;padding:14px 12px;background:#1A9B8A;color:white;"
+                    f"text-align:center;border-radius:8px;text-decoration:none;"
+                    f"font-weight:600;margin-bottom:6px'>{label}</a>",
+                    unsafe_allow_html=True,
+                )
+                if blurb:
+                    st.caption(blurb)
+        st.divider()
+    elif _PURCHASE_URL:
         st.info(f"Don't have a subscription yet? [Subscribe here]({_PURCHASE_URL}) to get a licence key.")
 
     with st.form("licence_form", clear_on_submit=False):
