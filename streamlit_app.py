@@ -1183,13 +1183,27 @@ def generate_ndis_bsp(client_data_text: str, plan_type: str, rp_types: list,
     )
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=4000,
+        model="claude-opus-4-5", max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    return json.loads(raw)
+    # If JSON is truncated, attempt to close it gracefully
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Try to salvage by trimming to last complete top-level key
+        last_brace = raw.rfind('"}')
+        if last_brace > 0:
+            raw = raw[:last_brace + 2] + "\n}}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            raise ValueError(
+                "The BSP response was too long and could not be parsed. "
+                "Try selecting fewer restrictive practices, or use Interim instead of Comprehensive."
+            )
 
 
 def create_bsp_docx(bsp: dict, plan_type: str, client_name: str,
