@@ -265,7 +265,7 @@ def generate_recording_report(data: dict) -> BytesIO:
     # ── Behaviours identified ──
     behaviours = data.get("behaviours", [])
     if behaviours:
-        total = data.get("total_incidents") or sum(b.get("frequency", 0) for b in behaviours) or 1
+        total = data.get("total_incidents") or sum((b.get("frequency") or 0) for b in behaviours) or 1
         y = ensure(y, SH + 40)
         y = sec(c, y, "Behaviours identified by carers", TEAL)
         for b in behaviours:
@@ -1025,6 +1025,510 @@ def generate_strategy_report(result: dict, client_name: str,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# NDIS BSP GENERATION (Tab 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def format_data_for_bsp(t0_data: dict = None, t1_data: dict = None) -> str:
+    """Combine available tab data into structured text for BSP generation."""
+    parts = []
+    if t1_data:
+        parts.append(f"CLIENT NAME: {t1_data.get('name', 'Unknown')}")
+        parts.append(f"PROFILE: {t1_data.get('age_info', '')}")
+        if t1_data.get('pronouns'):
+            parts.append(f"PRONOUNS: {t1_data['pronouns']}")
+        if t1_data.get('about'):
+            parts.append("ABOUT THIS PERSON: " + "; ".join(t1_data['about']))
+        if t1_data.get('warning_signs'):
+            parts.append("WARNING SIGNS: " + "; ".join(t1_data['warning_signs']))
+        if t1_data.get('triggers'):
+            parts.append("KNOWN TRIGGERS: " + "; ".join(t1_data['triggers']))
+        if t1_data.get('proactive'):
+            parts.append("CURRENT PROACTIVE STRATEGIES: " + "; ".join(t1_data['proactive']))
+        if t1_data.get('reactive'):
+            parts.append("CURRENT REACTIVE STRATEGIES: " + "; ".join(t1_data['reactive']))
+        if t1_data.get('do_not'):
+            parts.append("DO NOT DO: " + "; ".join(t1_data['do_not']))
+        for b in t1_data.get('behaviours', []):
+            parts.append(f"BEHAVIOUR — {b.get('label','')}: {'; '.join(b.get('descriptors', []))}")
+    if t0_data:
+        parts.append(f"\n30-DAY RECORDING (period: {t0_data.get('recording_period','unknown')}):")
+        parts.append(f"Total incidents: {t0_data.get('total_incidents','unknown')}")
+        if t0_data.get('carer_concerns'):
+            parts.append(f"CARER CONCERNS: {t0_data['carer_concerns']}")
+        patterns = t0_data.get('patterns', {})
+        all_p = (patterns.get('time_of_day',[]) + patterns.get('day_of_week',[]) +
+                 patterns.get('settings',[]) + patterns.get('other',[]))
+        if all_p:
+            parts.append("PATTERNS: " + "; ".join(all_p))
+        if t0_data.get('triggers'):
+            parts.append("CARER-RECORDED TRIGGERS: " + "; ".join(t0_data['triggers']))
+        if t0_data.get('carer_responses'):
+            parts.append("STRATEGIES TRIED: " + "; ".join(t0_data['carer_responses']))
+        for b in t0_data.get('behaviours', []):
+            parts.append(f"RECORDED BEHAVIOUR — {b.get('label','')}: {b.get('frequency','?')} incidents. "
+                         f"{b.get('carer_description','')}")
+        if t0_data.get('notes_for_practitioner'):
+            parts.append("CLINICAL NOTES: " + "; ".join(t0_data['notes_for_practitioner']))
+    return '\n'.join(parts) if parts else "No client data available."
+
+
+NDIS_BSP_PROMPT = """\
+You are an experienced NDIS Behaviour Support Practitioner writing a compliant Positive Behaviour Support Plan.
+
+Generate a draft {plan_type} Behaviour Support Plan to NDIS Version 3 template standards.
+
+For regulated restrictive practices:
+- Justify using least restrictive principles
+- Mark authorisation fields as [PRACTITIONER TO COMPLETE]
+- Include a fading plan for each RP
+
+Return ONLY valid JSON — no commentary, no markdown fences.
+
+JSON structure:
+{{
+  "about_client": "2-3 paragraphs — strengths, what matters to the person, daily life, communication style",
+  "communication": "Detailed description of communication abilities and supports needed",
+  "behaviours_of_concern": [
+    {{
+      "name": "behaviour label",
+      "description": "Observable, measurable description",
+      "frequency": "How often, based on available data",
+      "impact": "Impact on participation and quality of life"
+    }}
+  ],
+  "fba_summary": {{
+    "setting_events": ["setting event 1"],
+    "triggers": ["immediate trigger 1"],
+    "functions": ["Behaviour X — likely function: Y with rationale"],
+    "hypothesis": "Full hypothesis statement linking antecedents, behaviour and consequences"
+  }},
+  "goals": [
+    {{
+      "goal": "SMART, person-centred goal statement",
+      "measure": "How progress will be measured",
+      "timeframe": "Target timeframe"
+    }}
+  ],
+  "proactive_strategies": ["detailed proactive strategy 1"],
+  "reactive_strategies": ["detailed reactive/de-escalation strategy 1"],
+  "skill_building": ["replacement skill or communication strategy 1"],
+  "crisis_strategy": {{
+    "warning_signs": ["observable early warning sign 1"],
+    "escalation_signs": ["sign of escalation to crisis 1"],
+    "immediate_responses": ["immediate staff action 1"],
+    "staff_safety": ["staff safety consideration 1"],
+    "environment_management": ["environmental adjustment 1"],
+    "post_crisis_support": ["post-crisis support action 1"],
+    "when_to_call_emergency": "Clear criteria for calling 000 or emergency services",
+    "debrief_process": "Staff debrief and documentation process after a crisis"
+  }},
+  "restrictive_practices": [
+    {{
+      "type": "RP type from NDIS framework",
+      "description": "Exactly how this practice is implemented in practice",
+      "behaviour_addressed": "Which behaviour(s) this RP relates to and why",
+      "justification": "Clinical justification — what harm it prevents, why necessary",
+      "least_restrictive_evidence": "Evidence that less restrictive alternatives were considered",
+      "conditions_of_use": "When and how this RP may be used — triggers, duration limits, who implements",
+      "monitoring": ["monitoring requirement 1"],
+      "risks": ["identified risk 1"],
+      "fading_plan": "Specific, time-bound plan to reduce and eliminate this RP",
+      "authorisation_note": "This RP requires NDIS authorisation prior to implementation."
+    }}
+  ],
+  "rp_protocol_notes": "General dignity, rights and monitoring notes for RP implementation",
+  "implementation": {{
+    "all_staff_responsibilities": ["all support staff responsibility 1"],
+    "team_leader_responsibilities": ["team leader responsibility 1"],
+    "practitioner_responsibilities": ["behaviour support practitioner responsibility 1"],
+    "training_requirements": [
+      {{
+        "topic": "Training topic",
+        "who": "Who requires this training",
+        "method": "Delivery method",
+        "timeframe": "When it must be completed"
+      }}
+    ],
+    "competency_statement": "What staff must demonstrate before implementing the plan",
+    "go_live_requirements": "Requirements to be met before plan implementation",
+    "review_schedule": "Routine and trigger-based review schedule"
+  }}
+}}
+
+PLAN TYPE: {plan_type}
+REGULATED RESTRICTIVE PRACTICES TO INCLUDE: {rp_list}
+
+CLIENT DATA:
+{client_data}
+
+{extra_context}
+
+RULES:
+- Person-centred language throughout — focus on strengths, needs and rights
+- Strategies must address the functional hypothesis
+- RP sections must reference least restrictive principles and NDIS authorisation
+- Crisis strategies must be specific and actionable — not generic
+- Australian spelling throughout
+- Mark anything requiring clinical verification with [PRACTITIONER TO VERIFY]
+"""
+
+
+def generate_ndis_bsp(client_data_text: str, plan_type: str, rp_types: list,
+                       extra_context: str, api_key: str) -> dict:
+    rp_list = ', '.join(rp_types) if rp_types else 'None'
+    extra_section = f"ADDITIONAL CONTEXT:\n{extra_context}" if extra_context.strip() else ""
+    prompt = NDIS_BSP_PROMPT.format(
+        plan_type=plan_type, rp_list=rp_list,
+        client_data=client_data_text, extra_context=extra_section,
+    )
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model="claude-opus-4-5", max_tokens=4000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
+    if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
+    return json.loads(raw)
+
+
+def create_bsp_docx(bsp: dict, plan_type: str, client_name: str,
+                     practitioner: str = "", contact: str = "") -> BytesIO:
+    from docx.shared import Pt, RGBColor, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = DocxDocument()
+    for sec in doc.sections:
+        sec.top_margin = Cm(2.0); sec.bottom_margin = Cm(2.0)
+        sec.left_margin = Cm(2.5); sec.right_margin = Cm(2.5)
+
+    NAVY   = RGBColor(0x0D, 0x4F, 0x6E)
+    TEALC  = RGBColor(0x1A, 0x9B, 0x8A)
+    REDC   = RGBColor(0xC0, 0x39, 0x2B)
+    AMBC   = RGBColor(0xD4, 0x70, 0x0A)
+    GREYC  = RGBColor(0x4A, 0x4A, 0x4A)
+
+    def h1(text):
+        p = doc.add_heading(text, level=1)
+        for r in p.runs: r.font.color.rgb = NAVY; r.font.size = Pt(14)
+        return p
+
+    def h2(text):
+        p = doc.add_heading(text, level=2)
+        for r in p.runs: r.font.color.rgb = TEALC; r.font.size = Pt(12)
+        return p
+
+    def body(text, italic=False):
+        p = doc.add_paragraph(text)
+        if italic:
+            for r in p.runs: r.italic = True
+        return p
+
+    def bul(text):
+        try:    return doc.add_paragraph(text, style='List Bullet')
+        except: return doc.add_paragraph(f"• {text}")
+
+    def placeholder(field):
+        p = doc.add_paragraph()
+        r = p.add_run(f"[{field}]")
+        r.bold = True; r.font.color.rgb = AMBC
+        return p
+
+    def warn(text):
+        p = doc.add_paragraph()
+        r = p.add_run(f"DRAFT — {text}")
+        r.italic = True; r.font.size = Pt(9); r.font.color.rgb = REDC
+        return p
+
+    def two_col_table(rows_data):
+        t = doc.add_table(rows=len(rows_data), cols=2)
+        t.style = 'Table Grid'
+        for i, (lbl, val) in enumerate(rows_data):
+            t.rows[i].cells[0].text = lbl
+            t.rows[i].cells[1].text = val if val else "[PRACTITIONER TO COMPLETE]"
+            if t.rows[i].cells[0].paragraphs[0].runs:
+                t.rows[i].cells[0].paragraphs[0].runs[0].bold = True
+        doc.add_paragraph("")
+        return t
+
+    # ── Cover ──────────────────────────────────────────────────────────────────
+    title = doc.add_heading("Positive Behaviour Support Plan", 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for r in title.runs: r.font.color.rgb = NAVY; r.font.size = Pt(18)
+    sub = doc.add_paragraph(f"{plan_type.title()} Plan")
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for r in sub.runs: r.bold = True; r.font.size = Pt(14); r.font.color.rgb = TEALC
+    doc.add_paragraph("")
+    two_col_table([
+        ("Participant name",               client_name),
+        ("NDIS number",                    "[NDIS NUMBER]"),
+        ("Date of birth",                  "[DATE OF BIRTH]"),
+        ("Plan start date",                date.today().strftime('%d %B %Y')),
+        ("Plan review date",               "[REVIEW DATE]"),
+        ("Behaviour Support Practitioner", practitioner or "[BSP PRACTITIONER NAME]"),
+    ])
+    warn("AI-generated draft. All content must be reviewed by a qualified practitioner before "
+         "implementation or NDIS submission. Regulated restrictive practices require NDIS "
+         "authorisation before use.")
+    doc.add_page_break()
+
+    # ── S1: About the person ───────────────────────────────────────────────────
+    h1(f"1. About {client_name}")
+    if bsp.get("about_client"):
+        body(bsp["about_client"])
+    else:
+        placeholder("Describe who this person is — strengths, interests, daily life, what matters to them")
+    if bsp.get("communication"):
+        h2("Communication")
+        body(bsp["communication"])
+
+    # ── S2: Behaviours of concern ──────────────────────────────────────────────
+    doc.add_paragraph("")
+    h1("2. Behaviours of concern")
+    for b in bsp.get("behaviours_of_concern", []):
+        h2(b.get("name", "Behaviour"))
+        two_col_table([
+            ("Description",        b.get("description", "")),
+            ("Frequency / rate",   b.get("frequency", "")),
+            ("Impact",             b.get("impact", "")),
+        ])
+    if not bsp.get("behaviours_of_concern"):
+        placeholder("List each behaviour of concern with description, frequency and impact")
+
+    # ── S3: FBA Summary ────────────────────────────────────────────────────────
+    doc.add_paragraph("")
+    h1("3. Functional behaviour assessment summary")
+    fba = bsp.get("fba_summary", {})
+    h2("Setting events")
+    for s in fba.get("setting_events", []): bul(s)
+    if not fba.get("setting_events"): placeholder("List setting events from assessment")
+    h2("Immediate triggers")
+    for t in fba.get("triggers", []): bul(t)
+    if not fba.get("triggers"): placeholder("List immediate antecedents/triggers")
+    h2("Functions of behaviour")
+    for f in fba.get("functions", []): bul(f)
+    if not fba.get("functions"): placeholder("Identify likely function for each behaviour")
+    h2("Summary hypothesis")
+    if fba.get("hypothesis"): body(fba["hypothesis"])
+    else: placeholder("Write the functional hypothesis statement")
+
+    # ── S4: Goals ──────────────────────────────────────────────────────────────
+    doc.add_paragraph("")
+    h1("4. Behaviour support plan goals")
+    for i, g in enumerate(bsp.get("goals", []), 1):
+        h2(f"Goal {i}")
+        two_col_table([
+            ("Goal statement",           g.get("goal", "")),
+            ("How progress is measured", g.get("measure", "")),
+            ("Target timeframe",         g.get("timeframe", "")),
+        ])
+    if not bsp.get("goals"): placeholder("Add SMART behaviour support goals")
+
+    # ── S5: Strategies ─────────────────────────────────────────────────────────
+    doc.add_paragraph("")
+    h1("5. Behaviour support strategies")
+    h2("5.1  Proactive strategies")
+    body("The following proactive strategies should be implemented consistently.", italic=True)
+    for s in bsp.get("proactive_strategies", []): bul(s)
+    if not bsp.get("proactive_strategies"): placeholder("List proactive strategies")
+    h2("5.2  Reactive strategies")
+    body("The following strategies should be used when behaviour is observed or escalating.", italic=True)
+    for s in bsp.get("reactive_strategies", []): bul(s)
+    if not bsp.get("reactive_strategies"): placeholder("List reactive and de-escalation strategies")
+    h2("5.3  Skill building and replacement behaviours")
+    body("The following skills will be taught to meet the person's needs more appropriately.", italic=True)
+    for s in bsp.get("skill_building", []): bul(s)
+    if not bsp.get("skill_building"): placeholder("List replacement skills and teaching strategies")
+
+    # ── S6: Crisis strategy ────────────────────────────────────────────────────
+    doc.add_page_break()
+    h1("6. Crisis and emergency response strategy")
+    warn("Crisis strategies must be reviewed and approved by the Behaviour Support Practitioner. "
+         "All staff must be trained before implementation.")
+    crisis = bsp.get("crisis_strategy", {})
+    sections_crisis = [
+        ("Early warning signs",           crisis.get("warning_signs", [])),
+        ("Signs of escalation to crisis",  crisis.get("escalation_signs", [])),
+        ("Immediate staff responses",      crisis.get("immediate_responses", [])),
+        ("Staff safety considerations",    crisis.get("staff_safety", [])),
+        ("Environmental management",       crisis.get("environment_management", [])),
+        ("Post-crisis support",            crisis.get("post_crisis_support", [])),
+    ]
+    for title_text, items in sections_crisis:
+        h2(title_text)
+        for item in items: bul(item)
+        if not items: placeholder(f"Complete — {title_text.lower()}")
+    h2("When to call emergency services (000)")
+    if crisis.get("when_to_call_emergency"):
+        body(crisis["when_to_call_emergency"])
+    else:
+        placeholder("Define clear criteria for calling 000")
+    h2("Debrief and documentation")
+    if crisis.get("debrief_process"):
+        body(crisis["debrief_process"])
+    else:
+        placeholder("Staff debrief and incident documentation process")
+    h2("Emergency contacts")
+    ec = doc.add_table(rows=5, cols=2)
+    ec.style = 'Table Grid'
+    for i, (role, detail) in enumerate([
+        ("Role", "Contact details"),
+        ("On-call manager / team leader", "[NAME / PHONE]"),
+        ("Behaviour Support Practitioner", practitioner or "[NAME / PHONE]"),
+        ("Emergency services", "000"),
+        ("NDIS Quality and Safeguards Commission", "1800 035 544"),
+    ]):
+        ec.rows[i].cells[0].text = role
+        ec.rows[i].cells[1].text = detail
+        if i == 0 and ec.rows[i].cells[0].paragraphs[0].runs:
+            ec.rows[i].cells[0].paragraphs[0].runs[0].bold = True
+            ec.rows[i].cells[1].paragraphs[0].runs[0].bold = True
+    doc.add_paragraph("")
+
+    # ── S7: Regulated restrictive practices ────────────────────────────────────
+    rps = bsp.get("restrictive_practices", [])
+    if rps:
+        doc.add_page_break()
+        h1("7. Regulated restrictive practices")
+        p = doc.add_paragraph()
+        r = p.add_run(
+            "IMPORTANT: Regulated restrictive practices cannot be implemented without NDIS "
+            "authorisation. This section is a DRAFT and requires completion, practitioner review "
+            "and formal authorisation before any regulated practice is used."
+        )
+        r.bold = True; r.font.color.rgb = REDC
+
+        # Register table
+        h2("7.1  Regulated restrictive practices register")
+        reg = doc.add_table(rows=1, cols=5)
+        reg.style = 'Table Grid'
+        for i, hdr in enumerate(["RP type", "Behaviour addressed", "Auth. type",
+                                   "Auth. date / ref", "Review date"]):
+            reg.rows[0].cells[i].text = hdr
+            if reg.rows[0].cells[i].paragraphs[0].runs:
+                reg.rows[0].cells[i].paragraphs[0].runs[0].bold = True
+        for rp in rps:
+            row = reg.add_row().cells
+            row[0].text = rp.get("type", "")
+            row[1].text = rp.get("behaviour_addressed", "")
+            row[2].text = "[AUTH TYPE]"
+            row[3].text = "[DATE / REF]"
+            row[4].text = "[REVIEW DATE]"
+        doc.add_paragraph("")
+
+        # Individual protocols
+        h2("7.2  Regulated restrictive practice protocols")
+        for i, rp in enumerate(rps, 1):
+            h2(f"Protocol {i}: {rp.get('type', 'Restrictive Practice')}")
+            two_col_table([
+                ("Type of regulated RP",         rp.get("type", "")),
+                ("Behaviour(s) addressed",        rp.get("behaviour_addressed", "")),
+                ("Description of practice",       rp.get("description", "")),
+                ("Clinical justification",        rp.get("justification", "")),
+                ("Least restrictive evidence",    rp.get("least_restrictive_evidence", "")),
+                ("Conditions of use",             rp.get("conditions_of_use", "")),
+            ])
+            h2("Monitoring requirements")
+            for m in rp.get("monitoring", []): bul(m)
+            if not rp.get("monitoring"): placeholder("List monitoring requirements")
+            h2("Identified risks")
+            for r_item in rp.get("risks", []): bul(r_item)
+            h2("Fading plan")
+            if rp.get("fading_plan"): body(rp["fading_plan"])
+            else: placeholder("Describe the plan to reduce and eliminate this RP")
+            h2("Authorisation details")
+            two_col_table([
+                ("Authorisation type",            "[NDIS authorisation type]"),
+                ("Authorising body / person",     "[AUTHORISING BODY]"),
+                ("Authorisation date",            "[DATE]"),
+                ("Authorisation reference number","[REFERENCE NUMBER]"),
+            ])
+        if bsp.get("rp_protocol_notes"):
+            h2("General implementation notes")
+            body(bsp["rp_protocol_notes"])
+
+    # ── S8: Implementation and training ───────────────────────────────────────
+    doc.add_page_break()
+    h1("8. Implementation plan and training")
+    impl = bsp.get("implementation", {})
+
+    h2("8.1  Roles and responsibilities")
+    for section_label, key in [
+        ("All support staff",               "all_staff_responsibilities"),
+        ("Team leader / coordinator",        "team_leader_responsibilities"),
+        ("Behaviour Support Practitioner",   "practitioner_responsibilities"),
+    ]:
+        h2(section_label)
+        for item in impl.get(key, []): bul(item)
+        if not impl.get(key): placeholder(f"{section_label} responsibilities")
+
+    h2("8.2  Training requirements")
+    training = impl.get("training_requirements", [])
+    if training:
+        tr = doc.add_table(rows=1, cols=4)
+        tr.style = 'Table Grid'
+        for i, hdr in enumerate(["Training topic", "Who requires it",
+                                   "Delivery method", "Must be completed"]):
+            tr.rows[0].cells[i].text = hdr
+            if tr.rows[0].cells[i].paragraphs[0].runs:
+                tr.rows[0].cells[i].paragraphs[0].runs[0].bold = True
+        for t_item in training:
+            row = tr.add_row().cells
+            row[0].text = t_item.get("topic", "")
+            row[1].text = t_item.get("who", "")
+            row[2].text = t_item.get("method", "")
+            row[3].text = t_item.get("timeframe", "")
+        doc.add_paragraph("")
+    else:
+        placeholder("List training requirements")
+
+    h2("8.3  Competency requirements")
+    if impl.get("competency_statement"): body(impl["competency_statement"])
+    else: placeholder("Define what staff must demonstrate before implementing this plan")
+
+    h2("8.4  Plan go-live requirements")
+    if impl.get("go_live_requirements"): body(impl["go_live_requirements"])
+    else: placeholder("Requirements to be met before the plan is implemented")
+
+    h2("8.5  Review schedule")
+    if impl.get("review_schedule"): body(impl["review_schedule"])
+    else: placeholder("Describe routine and trigger-based review schedule")
+
+    # ── S9: Sign-off ──────────────────────────────────────────────────────────
+    doc.add_paragraph("")
+    h1("9. Plan approval and sign-off")
+    so = doc.add_table(rows=5, cols=3)
+    so.style = 'Table Grid'
+    for i, (role, name, dt) in enumerate([
+        ("Role",                         "Name and signature", "Date"),
+        ("Behaviour Support Practitioner", practitioner or "", ""),
+        ("Supervisor / Senior Practitioner", "", ""),
+        ("Participant or nominee",         "", ""),
+        ("Provider representative",        "", ""),
+    ]):
+        so.rows[i].cells[0].text = role
+        so.rows[i].cells[1].text = name
+        so.rows[i].cells[2].text = dt
+        if i == 0:
+            for ci in range(3):
+                if so.rows[i].cells[ci].paragraphs[0].runs:
+                    so.rows[i].cells[ci].paragraphs[0].runs[0].bold = True
+    doc.add_paragraph("")
+    foot = doc.add_paragraph()
+    fr = foot.add_run(
+        f"DRAFT document generated {date.today().strftime('%d %B %Y')} to assist "
+        f"the Behaviour Support Practitioner. Requires clinical review before submission.  "
+        f"{contact or ''}"
+    )
+    fr.font.size = Pt(8); fr.italic = True; fr.font.color.rgb = GREYC
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STREAMLIT UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1047,10 +1551,11 @@ if not api_key:
         )
         st.caption("Your key is never stored.")
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Behaviour Recording",
     "📄 Generate from PBSP",
     "🧠 Strategy Recommender",
+    "📋 NDIS BSP Draft",
 ])
 
 
@@ -1119,7 +1624,7 @@ with tab1:
         st.divider()
 
         # ── Summary metrics ──
-        total = rec_data.get("total_incidents", "—")
+        total = rec_data.get("total_incidents") or "—"
         n_beh = len(rec_data.get("behaviours", []))
         period = rec_data.get("recording_period") or "30 days"
         col1, col2, col3 = st.columns(3)
@@ -1131,7 +1636,7 @@ with tab1:
         behs = rec_data.get("behaviours", [])
         if behs:
             st.markdown("##### Behaviours identified")
-            t = rec_data.get("total_incidents") or sum(b.get("frequency", 0) for b in behs) or 1
+            t = rec_data.get("total_incidents") or sum((b.get("frequency") or 0) for b in behs) or 1
             for b in behs:
                 freq = b.get("frequency", 0)
                 pct  = round(freq / t * 100) if t else 0
@@ -1629,4 +2134,198 @@ with tab3:
         "When a strategy library is uploaded, Claude selects from that document — "
         "verify that selected strategies are appropriate for this individual. "
         "This tool complements but does not replace a formal Behaviour Support Plan."
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — NDIS BSP DRAFT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.markdown(
+        "Generate a draft **NDIS Version 3 Behaviour Support Plan** using data already extracted "
+        "in the other tabs. The output is a formatted **Word document** structured to the NDIS "
+        "template — covering crisis strategy, regulated restrictive practices, RP protocols, and "
+        "implementation and training."
+    )
+    st.warning(
+        "**Clinical review required.** All AI-generated content must be reviewed and approved by a "
+        "qualified Behaviour Support Practitioner before implementation or NDIS submission. "
+        "Regulated restrictive practices require NDIS authorisation — this tool generates a draft only."
+    )
+    st.divider()
+
+    # ── Data from other tabs ───────────────────────────────────────────────────
+    st.markdown("#### Client data from other tabs")
+    t0 = st.session_state.get("t0_data")
+    t1 = st.session_state.get("t1_data")
+
+    if not t0 and not t1:
+        st.error(
+            "No client data available. Complete at least one of the following first:\n\n"
+            "- **Tab 1** — Upload a 30-day behaviour recording\n"
+            "- **Tab 2** — Upload a PBSP to extract client information"
+        )
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            if t1:
+                st.success(f"✅ **PBSP data** — {t1.get('name','')} ({t1.get('age_info','')})")
+            else:
+                st.info("No PBSP data (Tab 2 not yet used)")
+        with col2:
+            if t0:
+                st.success(f"✅ **Behaviour recording** — {t0.get('total_incidents','?')} incidents, "
+                           f"{len(t0.get('behaviours',[]))} behaviour(s)")
+            else:
+                st.info("No recording data (Tab 1 not yet used)")
+
+        bsp_client_name = (t1.get("name") if t1 else None) or \
+                          (t0.get("client_name") if t0 else None) or "Client"
+
+        st.divider()
+
+        # ── Plan type ──────────────────────────────────────────────────────────
+        st.markdown("#### Plan type")
+        plan_type = st.radio(
+            "Select NDIS BSP type",
+            ["Comprehensive", "Interim"],
+            horizontal=True, key="bsp_plan_type",
+            help="Comprehensive — full multi-element plan. Interim — shorter, for new participants "
+                 "or urgent situations."
+        )
+
+        st.divider()
+
+        # ── Restrictive practices ──────────────────────────────────────────────
+        st.markdown("#### Regulated restrictive practices")
+        st.caption("Select all that are currently in use or being proposed for this person.")
+        rp_options = [
+            "Physical restraint",
+            "Mechanical restraint",
+            "Chemical restraint (medication as behaviour support strategy)",
+            "Seclusion",
+            "Environmental restraint",
+        ]
+        selected_rps = []
+        c1, c2 = st.columns(2)
+        for i, rp in enumerate(rp_options):
+            with (c1 if i % 2 == 0 else c2):
+                if st.checkbox(rp, key=f"rp_{i}"):
+                    selected_rps.append(rp)
+        if not selected_rps:
+            st.info("No regulated restrictive practices selected — the RP section will be omitted.")
+
+        st.divider()
+
+        # ── Additional context ─────────────────────────────────────────────────
+        st.markdown("#### Additional context (optional)")
+        bsp_extra = st.text_area(
+            "Anything the tool doesn't have from the other tabs",
+            key="bsp_extra", height=100,
+            placeholder="e.g. Relevant history, recent incidents, current medications prescribed "
+                        "for behaviour support, participant/family preferences, living situation..."
+        )
+
+        # ── Practitioner details ───────────────────────────────────────────────
+        st.markdown("#### Practitioner details")
+        bp1, bp2 = st.columns(2)
+        with bp1:
+            bsp_prac = st.text_input("Your name / title", key="bsp_prac",
+                                      placeholder="e.g. Janine Hogg — PBS Practitioner")
+        with bp2:
+            bsp_contact = st.text_input("Contact email", key="bsp_contact",
+                                         placeholder="e.g. janine@org.com.au")
+
+        st.divider()
+
+        # ── Generate ───────────────────────────────────────────────────────────
+        bsp_btn = st.button(
+            "Generate BSP draft", type="primary",
+            disabled=not api_key, key="bsp_gen"
+        )
+        if not api_key:
+            st.info("Enter your Anthropic API key in the sidebar to enable this tool.")
+
+        if bsp_btn and api_key:
+            client_data_text = format_data_for_bsp(t0_data=t0, t1_data=t1)
+            with st.spinner(f"Drafting {plan_type} BSP for {bsp_client_name}…"):
+                try:
+                    bsp_result = generate_ndis_bsp(
+                        client_data_text, plan_type.lower(),
+                        selected_rps, bsp_extra or "", api_key
+                    )
+                    st.session_state["bsp_data"] = bsp_result
+                except Exception as e:
+                    st.error(f"Generation failed: {e}"); st.stop()
+            st.success(f"✅ {plan_type} BSP drafted for **{bsp_client_name}**")
+
+        if "bsp_data" in st.session_state:
+            bsp_result = st.session_state["bsp_data"]
+            st.divider()
+
+            # On-screen preview
+            if bsp_result.get("about_client"):
+                preview = bsp_result["about_client"]
+                st.info(f"**About {bsp_client_name}:** {preview[:280]}{'…' if len(preview)>280 else ''}")
+
+            behs = bsp_result.get("behaviours_of_concern", [])
+            if behs:
+                st.markdown(f"**{len(behs)} behaviour(s) of concern identified**")
+                for b in behs:
+                    st.markdown(f"- **{b.get('name','')}:** {b.get('description','')}")
+
+            crisis = bsp_result.get("crisis_strategy", {})
+            if crisis.get("immediate_responses"):
+                with st.expander("Preview crisis strategy"):
+                    st.markdown("**Immediate responses:**")
+                    for r in crisis["immediate_responses"]: st.markdown(f"- {r}")
+                    if crisis.get("when_to_call_emergency"):
+                        st.markdown(f"**When to call 000:** {crisis['when_to_call_emergency']}")
+
+            rps = bsp_result.get("restrictive_practices", [])
+            if rps:
+                with st.expander(f"Preview regulated restrictive practices — {len(rps)} included"):
+                    for rp in rps:
+                        st.markdown(f"**{rp.get('type','')}** — {rp.get('behaviour_addressed','')}")
+                        st.markdown(f"*{rp.get('justification','')}*")
+                        if rp.get("fading_plan"):
+                            st.markdown(f"Fading plan: {rp['fading_plan']}")
+                        st.markdown("---")
+
+            impl = bsp_result.get("implementation", {})
+            training = impl.get("training_requirements", [])
+            if training:
+                with st.expander(f"Preview training requirements — {len(training)} items"):
+                    for t_item in training:
+                        st.markdown(f"- **{t_item.get('topic','')}** "
+                                    f"({t_item.get('who','')}) — {t_item.get('timeframe','')}")
+
+            st.divider()
+
+            with st.spinner("Building Word document…"):
+                try:
+                    docx_buf = create_bsp_docx(
+                        bsp_result, plan_type, bsp_client_name,
+                        (bsp_prac or "").strip(), (bsp_contact or "").strip()
+                    )
+                except Exception as e:
+                    st.error(f"Document error: {e}"); st.stop()
+
+            safe = bsp_client_name.replace(" ", "_")
+            st.download_button(
+                f"📥 Download {plan_type} BSP draft (Word)", docx_buf,
+                f"{safe}_{plan_type}_BSP_Draft.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+
+            if st.button("🗑 Clear BSP draft", key="bsp_clear"):
+                del st.session_state["bsp_data"]; st.rerun()
+
+    st.divider()
+    st.caption(
+        "This tool generates a draft BSP to assist the Behaviour Support Practitioner. "
+        "It does not replace clinical assessment, professional judgment, or the NDIS requirement "
+        "for authorisation of regulated restrictive practices. "
+        "Always review all content before implementing strategies or submitting to the NDIS."
     )
