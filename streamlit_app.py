@@ -1543,6 +1543,506 @@ def create_bsp_docx(bsp: dict, plan_type: str, client_name: str,
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# FUNCTIONAL BEHAVIOUR ASSESSMENT (Tab 5)
+# ══════════════════════════════════════════════════════════════════════════════
+
+FBA_PROMPT = """\
+You are an experienced NDIS Behaviour Support Practitioner interpreting standardised FBA assessment results.
+
+The text below has been extracted from completed assessment tool score reports.
+
+For each tool present:
+1. Extract all scores precisely as reported
+2. Write an interpretive narrative in the clinical voice used in an NDIS Comprehensive PBSP
+3. Link findings to behaviour patterns where the data supports it
+
+Narratives must be:
+- Written in third person about the participant
+- 3-5 paragraphs per tool (matching the depth of a professional NDIS PBSP)
+- Specific to the scores — not generic descriptions of the tool
+- Clinically accurate and person-centred
+
+Return ONLY valid JSON — no commentary, no markdown fences.
+
+JSON structure:
+{{
+  "client_name": "participant name if visible in the data, otherwise null",
+  "tools_identified": ["list of tools found"],
+  "direct_methods": ["list of direct assessment methods used — observations, session notes, etc."],
+  "indirect_methods": ["list of indirect/standardised tools used"],
+  "results": {{
+    "edaq": {{
+      "present": true,
+      "completed_by": "name and date if visible",
+      "total_score": "X/74",
+      "threshold_note": "threshold for relevant age range",
+      "narrative": "3-4 paragraph interpretive narrative specific to these scores"
+    }},
+    "qabf": {{
+      "present": true,
+      "behaviours": [
+        {{
+          "behaviour_name": "name of behaviour or presentation assessed",
+          "completed_by": "name and date if visible",
+          "scores": {{
+            "attention": "X/15",
+            "escape": "X/15",
+            "non_social": "X/15",
+            "physical": "X/15",
+            "tangible": "X/15"
+          }},
+          "narrative": "2-3 paragraph interpretive narrative for this behaviour's scores"
+        }}
+      ]
+    }},
+    "sensory_profile": {{
+      "present": true,
+      "completed_by": "name and date if visible",
+      "processing": {{
+        "seeking": "Much less than others / Less than others / Just like others / More than others / Much more than others",
+        "avoiding": "...",
+        "sensitivity": "...",
+        "registration": "..."
+      }},
+      "sensory": {{
+        "auditory": "...",
+        "visual": "...",
+        "touch": "...",
+        "movement": "...",
+        "body_position": "...",
+        "oral": "..."
+      }},
+      "behaviour_scores": {{
+        "conduct": "...",
+        "social_emotional": "...",
+        "attentional": "..."
+      }},
+      "narrative": "4-5 paragraph interpretive narrative specific to this person's sensory profile"
+    }},
+    "fast": {{
+      "present": true,
+      "completed_by": "name and date if visible",
+      "scores": {{
+        "social_connection": "X/4",
+        "social_autonomy": "X/4",
+        "automatic_sensory": "X/4",
+        "automatic_interoceptive": "X/4"
+      }},
+      "narrative": "3-4 paragraph interpretive narrative specific to these scores"
+    }},
+    "tmq": {{
+      "present": true,
+      "completed_by": "name and date if visible",
+      "factors": {{
+        "special_interests": "X/5",
+        "rumination_anxiety": "X/5",
+        "need_for_routines": "X/5",
+        "environmental_impact": "X/5",
+        "losing_track": "X/5",
+        "decision_making": "X/5",
+        "anxiety_reducing": "X/5",
+        "social_interactions": "X/5",
+        "overall_average": "X/5"
+      }},
+      "narrative": "3-4 paragraph interpretive narrative specific to these scores"
+    }},
+    "abas": {{
+      "present": false,
+      "completed_by": null,
+      "domain_scores": {{}},
+      "narrative": null
+    }},
+    "abc_data": {{
+      "present": false,
+      "summary": null,
+      "narrative": null
+    }}
+  }},
+  "function_of_presentation": {{
+    "behaviour_description": "2-3 paragraphs describing the behaviour pattern, its observable features, and escalation pathway",
+    "relevant_evidence": "2-3 paragraphs synthesising findings across all tools — how they collectively explain the behaviour",
+    "summary_statement": "1-2 paragraphs stating the confirmed primary and secondary functions of behaviour — evidence-based, not hypothesised"
+  }}
+}}
+
+RULES:
+- Extract scores exactly as reported — do not estimate or fill in missing data
+- Mark any tool not found in the data as present: false with null values
+- Narratives must be specific to the actual scores — never generic
+- The summary_statement in function_of_presentation must state confirmed function (evidence-based), not hypothesis
+- Use Australian spelling throughout
+- If a score or section is unclear from the PDF, note [SCORE UNCLEAR — VERIFY] in that field
+
+ASSESSMENT DATA:
+{text}
+
+CLIENT CONTEXT (from other tabs):
+{client_context}
+"""
+
+
+def extract_and_interpret_fba(pdf_texts: list, client_context: str, api_key: str) -> dict:
+    combined = "\n\n---\n\n".join(pdf_texts)
+    prompt = FBA_PROMPT.format(
+        text=combined[:50000],
+        client_context=client_context or "Not provided",
+    )
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model="claude-opus-4-5", max_tokens=8000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
+    if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        last = raw.rfind('"}')
+        if last > 0:
+            try: return json.loads(raw[:last+2] + "\n}}")
+            except Exception: pass
+        raise ValueError(
+            "Could not parse FBA results. The PDF text may be too long or unclear. "
+            "Try uploading fewer files at once."
+        )
+
+
+def create_fba_docx(fba: dict, client_name: str,
+                     practitioner: str = "", contact: str = "") -> BytesIO:
+    from docx.shared import Pt, RGBColor, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = DocxDocument()
+    for sec in doc.sections:
+        sec.top_margin = Cm(2.0); sec.bottom_margin = Cm(2.0)
+        sec.left_margin = Cm(2.5); sec.right_margin = Cm(2.5)
+
+    NAVY  = RGBColor(0x0D, 0x4F, 0x6E)
+    TEALC = RGBColor(0x1A, 0x9B, 0x8A)
+    REDC  = RGBColor(0xC0, 0x39, 0x2B)
+    AMBC  = RGBColor(0xD4, 0x70, 0x0A)
+    GREYC = RGBColor(0x4A, 0x4A, 0x4A)
+
+    def h1(text):
+        p = doc.add_heading(text, level=1)
+        for r in p.runs: r.font.color.rgb = NAVY; r.font.size = Pt(14)
+        return p
+
+    def h2(text):
+        p = doc.add_heading(text, level=2)
+        for r in p.runs: r.font.color.rgb = TEALC; r.font.size = Pt(12)
+        return p
+
+    def body(text, italic=False):
+        p = doc.add_paragraph(text)
+        if italic:
+            for r in p.runs: r.italic = True
+        return p
+
+    def bul(text):
+        try:    return doc.add_paragraph(text, style='List Bullet')
+        except: return doc.add_paragraph(f"• {text}")
+
+    def score_table(rows_data, col_headers=None):
+        n_cols = len(rows_data[0]) if rows_data else 2
+        t = doc.add_table(rows=len(rows_data), cols=n_cols)
+        t.style = 'Table Grid'
+        for i, row in enumerate(rows_data):
+            for j, cell_val in enumerate(row):
+                t.rows[i].cells[j].text = str(cell_val) if cell_val else ""
+                if i == 0 and t.rows[i].cells[j].paragraphs[0].runs:
+                    t.rows[i].cells[j].paragraphs[0].runs[0].bold = True
+        doc.add_paragraph("")
+        return t
+
+    def narrative_block(text):
+        if not text: return
+        for para in text.split('\n'):
+            para = para.strip()
+            if para:
+                body(para)
+
+    # ── Cover ──────────────────────────────────────────────────────────────────
+    title = doc.add_heading("Section 8: Functional Behaviour Assessment", 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for r in title.runs: r.font.color.rgb = NAVY; r.font.size = Pt(16)
+    sub = doc.add_paragraph(client_name)
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for r in sub.runs: r.bold = True; r.font.size = Pt(13); r.font.color.rgb = TEALC
+    doc.add_paragraph("")
+
+    p = doc.add_paragraph()
+    r = p.add_run("DRAFT — AI-generated interpretation of uploaded assessment data. "
+                  "All narratives must be reviewed and verified by the Behaviour Support "
+                  "Practitioner before inclusion in the Comprehensive PBSP.")
+    r.italic = True; r.font.size = Pt(9); r.font.color.rgb = REDC
+    doc.add_page_break()
+
+    # ── Overview ───────────────────────────────────────────────────────────────
+    h1("Overview")
+    body(
+        "A Functional Behaviour Assessment (FBA) was completed by the Behaviour Support "
+        f"Practitioner, {practitioner or '[PRACTITIONER NAME]'}, with information gathered "
+        "through direct observations, stakeholder consultation, standardised assessment "
+        "measures, and review of available records."
+    )
+    doc.add_paragraph("")
+
+    direct_methods = fba.get("direct_methods", [])
+    if direct_methods:
+        body("Direct assessment methods:", italic=True)
+        for m in direct_methods: bul(m)
+    doc.add_paragraph("")
+
+    indirect_methods = fba.get("indirect_methods", [])
+    if indirect_methods:
+        body("The following standardised tools and information sources were utilised:", italic=True)
+        for m in indirect_methods: bul(m)
+    doc.add_paragraph("")
+
+    # ── Assessment Results ─────────────────────────────────────────────────────
+    h1("Assessment Results")
+    results = fba.get("results", {})
+
+    # EDA-Q
+    edaq = results.get("edaq", {})
+    if edaq.get("present"):
+        h2("Extreme Demand Avoidance Questionnaire (EDA-Q)")
+        body(
+            "The EDA-Q consists of 26 questions aimed to measure the presence of "
+            "extreme/pathological demand avoidance in a person's behaviour over the most "
+            "recent 6 months. The questionnaire is used for the purpose of understanding "
+            "only and is not a diagnostic test."
+        )
+        doc.add_paragraph("")
+        score_table([
+            [f"{client_name}'s EDA-Q Results"],
+            ["Total score", edaq.get("total_score", "[SCORE]")],
+            ["Threshold note", edaq.get("threshold_note", "")],
+            ["Completed by", edaq.get("completed_by", "[VERIFY]")],
+        ])
+        narrative_block(edaq.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # QABF
+    qabf = results.get("qabf", {})
+    if qabf.get("present"):
+        h2("Questions About Behavioural Function (QABF)")
+        body(
+            "The QABF is completed by members of a person's support network to assess "
+            "the impact of behaviour on a person's environment. The questionnaire consists "
+            "of 25 questions and is completed for each individual behaviour being assessed."
+        )
+        doc.add_paragraph("")
+        for beh in qabf.get("behaviours", []):
+            h2(f"{client_name}'s Results from the QABF")
+            if beh.get("behaviour_name"):
+                body(f"Assessed presentation: {beh['behaviour_name']}", italic=True)
+            scores = beh.get("scores", {})
+            score_table([
+                ["Category", "Score"],
+                ["Attention",   scores.get("attention",   "[VERIFY]")],
+                ["Escape",      scores.get("escape",      "[VERIFY]")],
+                ["Non-social",  scores.get("non_social",  "[VERIFY]")],
+                ["Physical",    scores.get("physical",    "[VERIFY]")],
+                ["Tangible",    scores.get("tangible",    "[VERIFY]")],
+                ["Completed by", beh.get("completed_by", "[VERIFY]"), ""],
+            ])
+            narrative_block(beh.get("narrative", ""))
+            doc.add_paragraph("")
+
+    # Sensory Profile 2.0
+    sp = results.get("sensory_profile", {})
+    if sp.get("present"):
+        h2("Sensory Profile 2.0")
+        body(
+            "The Sensory Profile 2.0 is a comprehensive caregiver questionnaire which "
+            "assesses the way a person interacts with and experiences sensory input across "
+            "different environments."
+        )
+        doc.add_paragraph("")
+        h2(f"{client_name}'s Results from the Sensory Profile 2.0")
+        if sp.get("completed_by"):
+            body(f"Completed by {sp['completed_by']}.", italic=True)
+        proc = sp.get("processing", {})
+        if proc:
+            score_table([
+                ["Sensory Profile 2.0 Score Summary – Processing",
+                 "Much less than others", "Less than others", "Just like others",
+                 "More than others", "Much more than others"],
+                _sp_row("Seeking/Seeker",      proc.get("seeking",      "")),
+                _sp_row("Avoiding/Avoider",    proc.get("avoiding",     "")),
+                _sp_row("Sensitivity/Sensor",  proc.get("sensitivity",  "")),
+                _sp_row("Registration/Bystander", proc.get("registration", "")),
+            ])
+        sens = sp.get("sensory", {})
+        if sens:
+            score_table([
+                ["Sensory Profile 2.0 Score Summary – Sensory",
+                 "Much less than others", "Less than others", "Just like others",
+                 "More than others", "Much more than others"],
+                _sp_row("Auditory Processing",       sens.get("auditory",      "")),
+                _sp_row("Visual Processing",         sens.get("visual",        "")),
+                _sp_row("Touch Processing",          sens.get("touch",         "")),
+                _sp_row("Movement Processing",       sens.get("movement",      "")),
+                _sp_row("Body Position Processing",  sens.get("body_position", "")),
+                _sp_row("Oral Sensory Processing",   sens.get("oral",          "")),
+            ])
+        beh_scores = sp.get("behaviour_scores", {})
+        if beh_scores:
+            score_table([
+                ["Sensory Profile 2.0 Score Summary – Behaviour",
+                 "Much less than others", "Less than others", "Just like others",
+                 "More than others", "Much more than others"],
+                _sp_row("Conduct",                 beh_scores.get("conduct",         "")),
+                _sp_row("Social Emotional Responses", beh_scores.get("social_emotional", "")),
+                _sp_row("Attentional Responses",   beh_scores.get("attentional",     "")),
+            ])
+        narrative_block(sp.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # FAST
+    fast = results.get("fast", {})
+    if fast.get("present"):
+        h2("Functional Analysis Screening Tool (FAST)")
+        body(
+            "The FAST is a 16-item questionnaire that can be completed by anyone who "
+            "regularly interacts with the participant. The scoring suggests suspected "
+            "functions of behaviour. The greater the score (highest being 4), the greater "
+            "the impact of the corresponding category on behaviour."
+        )
+        doc.add_paragraph("")
+        h2(f"{client_name}'s Results from the FAST")
+        scores = fast.get("scores", {})
+        score_table([
+            ["FAST Category", "Impact on Behaviour"],
+            ["Social (need for connection and/or intellectual stimulation)",
+             scores.get("social_connection",      "[VERIFY]")],
+            ["Social (need for autonomy and overwhelmed by groups and demands)",
+             scores.get("social_autonomy",         "[VERIFY]")],
+            ["Automatic (need for sensory stimulation)",
+             scores.get("automatic_sensory",       "[VERIFY]")],
+            ["Automatic (complications in interoceptive registration)",
+             scores.get("automatic_interoceptive", "[VERIFY]")],
+            ["Completed by", fast.get("completed_by", "[VERIFY]")],
+        ])
+        narrative_block(fast.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # TMQ
+    tmq = results.get("tmq", {})
+    if tmq.get("present"):
+        h2("The Monotropism Questionnaire (TMQ)")
+        body(
+            "The Monotropism Questionnaire is a questionnaire developed by autistic "
+            "researchers, containing 47 statements. The results demonstrate the degree "
+            "to which the person experiences and is impacted by Monotropism. The higher "
+            "the score, the higher the likely experience and impact."
+        )
+        doc.add_paragraph("")
+        h2(f"{client_name}'s Results from the TMQ")
+        factors = tmq.get("factors", {})
+        score_table([
+            ["TMQ Factor", "Presentation of Factor"],
+            ["Special Interests",
+             factors.get("special_interests",   "[VERIFY]")],
+            ["Rumination and anxiety",
+             factors.get("rumination_anxiety",  "[VERIFY]")],
+            ["Need for routines",
+             factors.get("need_for_routines",   "[VERIFY]")],
+            ["Environmental impact on the attention tunnel",
+             factors.get("environmental_impact","[VERIFY]")],
+            ["Losing track of other factors when focusing on special interests",
+             factors.get("losing_track",        "[VERIFY]")],
+            ["Struggle with decision-making",
+             factors.get("decision_making",     "[VERIFY]")],
+            ["Anxiety-reducing effect of special interests",
+             factors.get("anxiety_reducing",    "[VERIFY]")],
+            ["Managing social interactions",
+             factors.get("social_interactions", "[VERIFY]")],
+            ["Overall Average",
+             factors.get("overall_average",     "[VERIFY]")],
+            ["Completed by", tmq.get("completed_by", "[VERIFY]")],
+        ])
+        narrative_block(tmq.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # ABAS (optional)
+    abas = results.get("abas", {})
+    if abas.get("present"):
+        h2("Adaptive Behaviour Assessment System (ABAS)")
+        domain_scores = abas.get("domain_scores", {})
+        if domain_scores:
+            rows = [["Domain", "Score"]]
+            for k, v in domain_scores.items():
+                rows.append([k, str(v)])
+            score_table(rows)
+        if abas.get("completed_by"):
+            body(f"Completed by {abas['completed_by']}.", italic=True)
+        narrative_block(abas.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # ABC data (optional)
+    abc = results.get("abc_data", {})
+    if abc.get("present"):
+        h2("ABC Recording Data")
+        if abc.get("summary"):
+            body(abc["summary"], italic=True)
+        narrative_block(abc.get("narrative", ""))
+        doc.add_paragraph("")
+
+    # ── Function of Presentation ───────────────────────────────────────────────
+    doc.add_page_break()
+    h1("Function of Presentation")
+    fop = fba.get("function_of_presentation", {})
+
+    if fop.get("behaviour_description"):
+        body("Behaviour Description:", italic=False)
+        narrative_block(fop["behaviour_description"])
+        doc.add_paragraph("")
+
+    if fop.get("relevant_evidence"):
+        body("Relevant Evidence:", italic=False)
+        narrative_block(fop["relevant_evidence"])
+        doc.add_paragraph("")
+
+    if fop.get("summary_statement"):
+        body("Summary Statement:", italic=False)
+        narrative_block(fop["summary_statement"])
+        doc.add_paragraph("")
+
+    # Footer
+    doc.add_paragraph("")
+    foot = doc.add_paragraph()
+    fr = foot.add_run(
+        f"FBA Section generated {date.today().strftime('%d %B %Y')} — "
+        f"DRAFT, requires practitioner review before inclusion in Comprehensive PBSP.  "
+        f"{contact or ''}"
+    )
+    fr.font.size = Pt(8); fr.italic = True; fr.font.color.rgb = GREYC
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _sp_row(label: str, rating: str) -> list:
+    """Build a Sensory Profile table row with an X in the correct column."""
+    cols = [
+        "Much less than others", "Less than others", "Just like others",
+        "More than others", "Much more than others"
+    ]
+    row = [label, "", "", "", "", ""]
+    for i, col in enumerate(cols):
+        if rating and col.lower() in rating.lower():
+            row[i + 1] = "X"
+            break
+    return row
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # STREAMLIT UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1565,11 +2065,12 @@ if not api_key:
         )
         st.caption("Your key is never stored.")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Behaviour Recording",
     "📄 Generate from PBSP",
     "🧠 Strategy Recommender",
     "📋 NDIS BSP Draft",
+    "🔍 Functional Behaviour Assessment",
 ])
 
 
@@ -2342,4 +2843,242 @@ with tab4:
         "It does not replace clinical assessment, professional judgment, or the NDIS requirement "
         "for authorisation of regulated restrictive practices. "
         "Always review all content before implementing strategies or submitting to the NDIS."
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — FUNCTIONAL BEHAVIOUR ASSESSMENT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.markdown(
+        "Upload your completed assessment score reports and this tool will extract the scores, "
+        "write interpretive narratives for each tool, and generate **Section 8: Functional "
+        "Behaviour Assessment** as a formatted Word document — ready to drop into your "
+        "Comprehensive PBSP."
+    )
+    st.info(
+        "**Workflow:** Complete the FBA tools → upload score reports here → review and download "
+        "Section 8 → use this in your Comprehensive BSP (Tab 4). "
+        "The Interim BSP does not include an FBA section — it uses hypothesis language only."
+    )
+    st.divider()
+
+    # ── Client info ────────────────────────────────────────────────────────────
+    st.markdown("#### Client information")
+    t1_fba = st.session_state.get("t1_data")
+    t0_fba = st.session_state.get("t0_data")
+
+    fba_client_name = (t1_fba.get("name") if t1_fba else None) or \
+                      (t0_fba.get("client_name") if t0_fba else None) or ""
+
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        fba_name = st.text_input(
+            "Client name", key="fba_name",
+            value=fba_client_name,
+            placeholder="e.g. Izayah Mills"
+        )
+    with fc2:
+        fba_prac = st.text_input(
+            "Practitioner name / title", key="fba_prac",
+            placeholder="e.g. Janine Hogg — Behaviour Support Practitioner"
+        )
+    fba_contact = st.text_input(
+        "Contact email", key="fba_contact",
+        placeholder="e.g. janine@ndaffirming.com.au"
+    )
+
+    # Build client context for prompt
+    fba_client_context = format_data_for_bsp(t0_data=t0_fba, t1_data=t1_fba) \
+                         if (t0_fba or t1_fba) else ""
+
+    st.divider()
+
+    # ── Tool uploads ───────────────────────────────────────────────────────────
+    st.markdown("#### Assessment tool score reports")
+    st.caption(
+        "Upload the completed score report PDF for each tool. "
+        "You can upload multiple files at once — Claude will identify which tool each belongs to."
+    )
+
+    fba_files = st.file_uploader(
+        "Upload assessment score reports (PDF)",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="fba_uploads",
+        help="EDA-Q, QABF, Sensory Profile 2.0, FAST, TMQ — upload one or all together"
+    )
+
+    # Show which tools are expected
+    st.markdown("**Tools typically included:**")
+    tool_cols = st.columns(3)
+    tools_list = [
+        ("EDA-Q", "Extreme Demand Avoidance Questionnaire"),
+        ("QABF", "Questions About Behavioural Function"),
+        ("Sensory Profile 2.0", "Sensory Profile 2.0"),
+        ("FAST", "Functional Analysis Screening Tool"),
+        ("TMQ", "Monotropism Questionnaire"),
+        ("ABAS", "Adaptive Behaviour Assessment System (optional)"),
+    ]
+    for i, (short, full) in enumerate(tools_list):
+        with tool_cols[i % 3]:
+            st.caption(f"**{short}** — {full}")
+
+    st.divider()
+
+    # ── Direct assessment methods ──────────────────────────────────────────────
+    st.markdown("#### Direct assessment methods")
+    st.caption("Describe the direct observations and methods used (will appear in the Overview section).")
+    fba_direct = st.text_area(
+        "Direct assessment methods",
+        key="fba_direct",
+        height=80,
+        placeholder=(
+            "e.g. Behaviour Support Practitioner observational assessment conducted across "
+            "in-home and telehealth sessions; review of practitioner session notes and "
+            "tracking data recorded by support workers..."
+        )
+    )
+
+    st.divider()
+
+    # ── Practitioner declaration ───────────────────────────────────────────────
+    fba_btn = st.button(
+        "Extract scores and generate Section 8",
+        type="primary",
+        disabled=not (fba_files and api_key),
+        key="fba_gen"
+    )
+
+    if not api_key:
+        st.info("Enter your Anthropic API key in the sidebar to enable this tool.")
+    elif not fba_files:
+        st.info("Upload at least one assessment score report PDF to continue.")
+
+    if fba_btn and fba_files and api_key:
+        # Extract text from all uploaded PDFs
+        pdf_texts = []
+        with st.spinner("Reading uploaded score reports…"):
+            for f in fba_files:
+                try:
+                    text = extract_text_from_pdf(f.read())
+                    if text.strip():
+                        pdf_texts.append(f"[FILE: {f.name}]\n{text}")
+                    else:
+                        st.warning(f"{f.name} — could not extract text. "
+                                   "Try re-saving as a text-based PDF.")
+                except Exception as e:
+                    st.warning(f"{f.name} — read error: {e}")
+
+        if not pdf_texts:
+            st.error("No readable text found in the uploaded files.")
+            st.stop()
+
+        # Inject direct methods into context if provided
+        ctx = fba_client_context
+        if fba_direct and fba_direct.strip():
+            ctx = f"DIRECT ASSESSMENT METHODS USED:\n{fba_direct}\n\n{ctx}"
+
+        with st.spinner(f"Extracting scores and writing FBA narratives for "
+                        f"{fba_name or 'client'}… (this takes 30–60 seconds)"):
+            try:
+                fba_result = extract_and_interpret_fba(pdf_texts, ctx, api_key)
+                # Inject client name if not found in PDFs
+                if not fba_result.get("client_name") and fba_name:
+                    fba_result["client_name"] = fba_name
+                st.session_state["fba_data"] = fba_result
+            except Exception as e:
+                st.error(f"FBA generation failed: {e}")
+                st.stop()
+
+        tools_found = fba_result.get("tools_identified", [])
+        st.success(
+            f"✅ FBA Section 8 generated for **{fba_name or 'client'}** — "
+            f"{len(tools_found)} tool(s) identified: {', '.join(tools_found)}"
+        )
+
+    if "fba_data" in st.session_state:
+        fba_result = st.session_state["fba_data"]
+        display_name = fba_name or fba_result.get("client_name") or "Client"
+        st.divider()
+
+        # On-screen preview
+        results = fba_result.get("results", {})
+
+        # Score summaries
+        score_preview = []
+        if results.get("edaq", {}).get("present"):
+            score_preview.append(f"**EDA-Q:** {results['edaq'].get('total_score','—')}")
+        if results.get("qabf", {}).get("present"):
+            behs = results["qabf"].get("behaviours", [])
+            for b in behs:
+                sc = b.get("scores", {})
+                score_preview.append(
+                    f"**QABF ({b.get('behaviour_name','Behaviour')}):** "
+                    f"Attn {sc.get('attention','—')} | "
+                    f"Escape {sc.get('escape','—')} | "
+                    f"Non-social {sc.get('non_social','—')} | "
+                    f"Tangible {sc.get('tangible','—')}"
+                )
+        if results.get("fast", {}).get("present"):
+            sc = results["fast"].get("scores", {})
+            score_preview.append(
+                f"**FAST:** Social-connection {sc.get('social_connection','—')} | "
+                f"Social-autonomy {sc.get('social_autonomy','—')} | "
+                f"Auto-sensory {sc.get('automatic_sensory','—')}"
+            )
+        if results.get("tmq", {}).get("present"):
+            score_preview.append(
+                f"**TMQ overall average:** "
+                f"{results['tmq'].get('factors',{}).get('overall_average','—')}"
+            )
+
+        if score_preview:
+            st.markdown("##### Extracted scores")
+            for s in score_preview:
+                st.markdown(f"- {s}")
+
+        # Function of presentation preview
+        fop = fba_result.get("function_of_presentation", {})
+        if fop.get("summary_statement"):
+            with st.expander("Preview — Function of Presentation summary"):
+                st.markdown(fop["summary_statement"])
+
+        st.divider()
+
+        # Build and download Word doc
+        with st.spinner("Building Word document…"):
+            try:
+                fba_docx = create_fba_docx(
+                    fba_result,
+                    display_name,
+                    (fba_prac or "").strip(),
+                    (fba_contact or "").strip()
+                )
+            except Exception as e:
+                st.error(f"Document error: {e}")
+                st.stop()
+
+        safe = display_name.replace(" ", "_")
+        st.download_button(
+            "📥 Download Section 8 — FBA (Word)",
+            fba_docx,
+            f"{safe}_FBA_Section8.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+        st.success(
+            "FBA data is now stored — switch to **Tab 4 (NDIS BSP Draft)** and select "
+            "Comprehensive to generate a plan that uses these findings."
+        )
+
+        if st.button("🗑 Clear FBA data", key="fba_clear"):
+            del st.session_state["fba_data"]; st.rerun()
+
+    st.divider()
+    st.caption(
+        "Assessment score reports are processed in memory only and never stored permanently. "
+        "All AI-generated narratives must be reviewed by the Behaviour Support Practitioner "
+        "before inclusion in a Comprehensive PBSP. "
+        "The FBA tab generates Section 8 only — use Tab 4 to generate the full Comprehensive plan."
     )
