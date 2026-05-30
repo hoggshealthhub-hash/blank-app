@@ -2166,7 +2166,7 @@ def verify_gumroad_license(license_key: str, product_ids: list,
 
 
 def _load_gumroad_config():
-    """Read Gumroad config from Streamlit secrets. Returns (product_ids, revoked_keys, purchase_url, dev_mode)."""
+    """Read Gumroad + founder config from Streamlit secrets."""
     try:
         product_ids = st.secrets.get("GUMROAD_PRODUCT_IDS", [])
         if isinstance(product_ids, str):
@@ -2174,14 +2174,17 @@ def _load_gumroad_config():
         revoked = st.secrets.get("REVOKED_KEYS", [])
         if isinstance(revoked, str):
             revoked = [r.strip() for r in revoked.split(",") if r.strip()]
+        founder = st.secrets.get("FOUNDER_KEYS", [])
+        if isinstance(founder, str):
+            founder = [f.strip() for f in founder.split(",") if f.strip()]
         purchase_url = st.secrets.get("GUMROAD_PURCHASE_URL", "")
         dev_mode = bool(st.secrets.get("DEV_MODE", False))
     except Exception:
-        product_ids, revoked, purchase_url, dev_mode = [], [], "", False
-    return list(product_ids), list(revoked), purchase_url, dev_mode
+        product_ids, revoked, founder, purchase_url, dev_mode = [], [], [], "", False
+    return list(product_ids), list(revoked), list(founder), purchase_url, dev_mode
 
 
-_GUMROAD_PRODUCT_IDS, _REVOKED_KEYS, _PURCHASE_URL, _DEV_MODE = _load_gumroad_config()
+_GUMROAD_PRODUCT_IDS, _REVOKED_KEYS, _FOUNDER_KEYS, _PURCHASE_URL, _DEV_MODE = _load_gumroad_config()
 LICENCE_REQUIRED = bool(_GUMROAD_PRODUCT_IDS) and not _DEV_MODE
 
 
@@ -2214,10 +2217,26 @@ if LICENCE_REQUIRED and not st.session_state.get("license_valid"):
         submitted = st.form_submit_button("Activate", type="primary", use_container_width=True)
 
     if submitted:
-        if not entered_key.strip():
+        key_clean = entered_key.strip()
+        if not key_clean:
             st.error("Please enter your licence key.")
-        elif entered_key.strip() in _REVOKED_KEYS:
+        elif key_clean in _REVOKED_KEYS:
             st.error("This licence has been revoked. Please contact support.")
+        elif key_clean in _FOUNDER_KEYS:
+            # Founder / internal access — bypass Gumroad verification
+            st.session_state["license_valid"] = True
+            st.session_state["license_info"] = {
+                "valid": True,
+                "product": "Founder Access",
+                "purchaser_email": "",
+                "recurrence": "perpetual",
+                "uses": 0,
+                "is_founder": True,
+            }
+            st.session_state["license_key"] = key_clean
+            st.session_state["license_last_verify"] = time.time()
+            st.success("✅ Founder access granted — welcome!")
+            st.rerun()
         else:
             with st.spinner("Verifying your licence…"):
                 result = verify_gumroad_license(
@@ -2226,7 +2245,7 @@ if LICENCE_REQUIRED and not st.session_state.get("license_valid"):
             if result["valid"]:
                 st.session_state["license_valid"] = True
                 st.session_state["license_info"] = result
-                st.session_state["license_key"] = entered_key.strip()
+                st.session_state["license_key"] = key_clean
                 st.session_state["license_last_verify"] = time.time()
                 st.success(f"✅ Licence verified — welcome!")
                 st.rerun()
@@ -2243,19 +2262,24 @@ if LICENCE_REQUIRED and not st.session_state.get("license_valid"):
 
 
 # Periodic re-verification (every 12 hours) to catch cancellations
-if LICENCE_REQUIRED and st.session_state.get("license_valid"):
+# Skip re-verification for founder keys — they always stay valid
+if LICENCE_REQUIRED and st.session_state.get("license_valid") \
+   and not st.session_state.get("license_info", {}).get("is_founder"):
     last = st.session_state.get("license_last_verify", 0)
     if time.time() - last > 12 * 3600:
         key = st.session_state.get("license_key", "")
-        result = verify_gumroad_license(key, _GUMROAD_PRODUCT_IDS, increment=False)
-        if result["valid"]:
-            st.session_state["license_info"] = result
+        if key in _FOUNDER_KEYS:
             st.session_state["license_last_verify"] = time.time()
         else:
-            for k in ("license_valid", "license_info", "license_key", "license_last_verify"):
-                st.session_state.pop(k, None)
-            st.error("Your subscription is no longer active. Please re-enter a valid licence.")
-            st.rerun()
+            result = verify_gumroad_license(key, _GUMROAD_PRODUCT_IDS, increment=False)
+            if result["valid"]:
+                st.session_state["license_info"] = result
+                st.session_state["license_last_verify"] = time.time()
+            else:
+                for k in ("license_valid", "license_info", "license_key", "license_last_verify"):
+                    st.session_state.pop(k, None)
+                st.error("Your subscription is no longer active. Please re-enter a valid licence.")
+                st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
