@@ -666,6 +666,50 @@ def cb_item(c, x, y, text, size=9, color=DARK_TEXT, bold=False):
     checkbox(c, x, y, 8)
     dlbl(c, x + 13, y + 1, text, size, bold=bold, color=color)
 
+def _robust_json_parse(raw: str, context: str = "response") -> dict:
+    """Parse JSON, salvaging truncated responses by closing unmatched braces/quotes."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    # Walk the string tracking bracket depth and string state
+    fixed = raw
+    in_string = False
+    escape = False
+    stack = []
+    last_safe = 0
+    for i, ch in enumerate(fixed):
+        if escape:
+            escape = False; continue
+        if ch == '\\' and in_string:
+            escape = True; continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            if not in_string:
+                last_safe = i + 1
+            continue
+        if in_string:
+            continue
+        if ch in '{[':
+            stack.append('}' if ch == '{' else ']')
+        elif ch in '}]':
+            if stack: stack.pop()
+            last_safe = i + 1
+        elif ch == ',':
+            last_safe = i + 1
+    # Truncate to last safe position, close remaining brackets
+    candidate = fixed[:last_safe].rstrip().rstrip(',')
+    candidate += ''.join(reversed(stack))
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"The {context} could not be parsed even after recovery. "
+            f"Try again, or reduce the amount of detail requested. "
+            f"(JSON error: {e})"
+        )
+
+
 def wrap_text(text: str, font_name: str, font_size: float, max_w: float) -> list:
     words = text.split()
     lines, line = [], ""
@@ -1183,27 +1227,13 @@ def generate_ndis_bsp(client_data_text: str, plan_type: str, rp_types: list,
     )
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=8000,
+        model="claude-opus-4-5", max_tokens=16000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    # If JSON is truncated, attempt to close it gracefully
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Try to salvage by trimming to last complete top-level key
-        last_brace = raw.rfind('"}')
-        if last_brace > 0:
-            raw = raw[:last_brace + 2] + "\n}}"
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            raise ValueError(
-                "The BSP response was too long and could not be parsed. "
-                "Try selecting fewer restrictive practices, or use Interim instead of Comprehensive."
-            )
+    return _robust_json_parse(raw, context="BSP")
 
 
 def create_bsp_docx(bsp: dict, plan_type: str, client_name: str,
@@ -1695,17 +1725,7 @@ def extract_and_interpret_fba(pdf_texts: list, client_context: str, api_key: str
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        last = raw.rfind('"}')
-        if last > 0:
-            try: return json.loads(raw[:last+2] + "\n}}")
-            except Exception: pass
-        raise ValueError(
-            "Could not parse FBA results. The PDF text may be too long or unclear. "
-            "Try uploading fewer files at once."
-        )
+    return _robust_json_parse(raw, context="FBA")
 
 
 def create_fba_docx(fba: dict, client_name: str,
