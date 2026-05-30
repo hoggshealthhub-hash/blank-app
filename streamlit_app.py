@@ -123,7 +123,9 @@ def extract_client_data(pbsp_text: str, api_key: str) -> dict:
 
 STRATEGY_PROMPT = """\
 You are an experienced Positive Behaviour Support (PBS) Practitioner.
-Based on the client profile and behaviours described, recommend practical evidence-based PBS strategies for support workers.
+Based on the client profile and behaviours described, recommend practical PBS strategies for support workers.
+
+{library_instruction}
 
 Return ONLY valid JSON — no commentary, no markdown fences.
 
@@ -155,9 +157,10 @@ CLIENT PROFILE:
 
 BEHAVIOURS OF CONCERN:
 {behaviours}
-"""
+{library_section}"""
 
-def recommend_strategies(client_info: dict, behaviours: list, api_key: str) -> dict:
+def recommend_strategies(client_info: dict, behaviours: list, api_key: str,
+                          library_text: str = None) -> dict:
     profile_text = (
         f"Name: {client_info['name']}\n"
         f"Age: {client_info['age']}\n"
@@ -172,7 +175,131 @@ def recommend_strategies(client_info: dict, behaviours: list, api_key: str) -> d
             f"  What it looks like: {b['description']}\n"
             f"  Known triggers / when it occurs: {b['triggers']}\n"
         )
-    prompt = STRATEGY_PROMPT.format(profile=profile_text, behaviours=behaviours_text)
+    if library_text:
+        lib_instruction = (
+            "IMPORTANT: Your primary task is to SELECT strategies FROM THE STRATEGY LIBRARY "
+            "provided at the end of this prompt. Quote or closely paraphrase library strategies. "
+            "Where the library has no relevant strategy for a specific need, you may suggest an "
+            "evidence-based alternative and append '(not in library)' to that item."
+        )
+        lib_section = f"\nSTRATEGY LIBRARY:\n{library_text[:30000]}"
+    else:
+        lib_instruction = (
+            "Generate evidence-based PBS strategies based on the likely function of each behaviour."
+        )
+        lib_section = ""
+    prompt = STRATEGY_PROMPT.format(
+        profile=profile_text, behaviours=behaviours_text,
+        library_instruction=lib_instruction, library_section=lib_section,
+    )
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model="claude-opus-4-5", max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = msg.content[0].text.strip()
+    if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
+    if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
+    return json.loads(raw)
+
+
+def pbsp_to_sr_format(data: dict) -> tuple:
+    """Convert extract_client_data output → (client_info dict, behaviours list) for Tab 2."""
+    age_info = data.get("age_info", "")
+    parts    = [p.strip() for p in age_info.split("|")]
+    age      = parts[0].replace("Age", "").strip() if parts else "not specified"
+    diagnosis = parts[1] if len(parts) > 1 else "not specified"
+    client_info = {
+        "name":      data.get("name") or data.get("preferred") or "Unknown",
+        "age":       age or "not specified",
+        "diagnosis": diagnosis or "not specified",
+        "comms":     "refer to PBSP",
+        "other":     "; ".join(data.get("about", [])) or "none provided",
+    }
+    triggers_str = "; ".join(data.get("triggers", []))
+    behaviours = [
+        {
+            "name":        b.get("label", "Behaviour"),
+            "description": "; ".join(b.get("descriptors", [])),
+            "triggers":    triggers_str,
+        }
+        for b in data.get("behaviours", [])
+    ]
+    return client_info, behaviours
+
+
+# ── Free-text behaviour description → strategies ──────────────────────────────
+
+FREETEXT_STRATEGY_PROMPT = """\
+You are an experienced Positive Behaviour Support (PBS) Practitioner.
+A practitioner has described a client and their behaviours in plain language below.
+
+Your tasks:
+1. Read the description and identify each distinct behaviour of concern
+2. Assign each a clear clinical label (e.g. "Physical aggression", "Self-injurious behaviour",
+   "Property destruction", "Verbal aggression", "Elopement")
+3. Infer the likely triggers and context from what is described
+4. Determine the likely function of each behaviour
+5. Recommend practical PBS strategies
+
+{library_instruction}
+
+Return ONLY valid JSON — no commentary, no markdown fences.
+
+JSON structure:
+{{
+  "client_summary": "2-3 sentence clinical summary based on the description",
+  "general_strategies": ["Up to 5 general/environmental strategies across all behaviours"],
+  "behaviours": [
+    {{
+      "behaviour": "Clinical label you have assigned",
+      "likely_function": "Primary function (Escape/Avoidance | Access | Sensory | Attention) — one sentence rationale drawn from the description",
+      "proactive": ["Up to 5 proactive strategies to prevent this behaviour"],
+      "reactive": ["Up to 5 reactive de-escalation strategies when this behaviour occurs"],
+      "teach_instead": ["Up to 3 replacement skills or communication strategies to build"],
+      "avoid": ["Up to 3 things NOT to do — common mistakes that escalate this behaviour"]
+    }}
+  ]
+}}
+
+Rules:
+- Keep each item under 90 characters — written for support workers to act on quickly
+- Use the description to infer triggers and context — be specific, not generic
+- Assign clinically appropriate behaviour labels
+- Use plain language in strategy recommendations
+- Replacement skills must serve the same function as the behaviour
+
+CLIENT PROFILE:
+{profile}
+
+PRACTITIONER'S DESCRIPTION:
+{freetext}
+{library_section}"""
+
+
+def recommend_from_freetext(client_info: dict, freetext: str, api_key: str,
+                              library_text: str = None) -> dict:
+    profile_text = (
+        f"Name: {client_info['name']}\n"
+        f"Age: {client_info['age']}\n"
+        f"Diagnosis/Condition: {client_info['diagnosis']}\n"
+        f"Communication level: {client_info['comms']}\n"
+        f"Additional context: {client_info['other']}"
+    )
+    if library_text:
+        lib_instruction = (
+            "IMPORTANT: Select strategies FROM THE STRATEGY LIBRARY provided at the end of this "
+            "prompt. Quote or closely paraphrase library strategies. Where the library has no "
+            "relevant strategy, suggest an evidence-based alternative and note '(not in library)'."
+        )
+        lib_section = f"\nSTRATEGY LIBRARY:\n{library_text[:30000]}"
+    else:
+        lib_instruction = "Generate evidence-based PBS strategies based on function and context."
+        lib_section = ""
+    prompt = FREETEXT_STRATEGY_PROMPT.format(
+        profile=profile_text, freetext=freetext,
+        library_instruction=lib_instruction, library_section=lib_section,
+    )
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
         model="claude-opus-4-5", max_tokens=3000,
@@ -637,6 +764,7 @@ with tab1:
                 abc_buf  = generate_abc_form(data)
             except Exception as e: st.error(f"PDF error: {e}"); st.stop()
 
+        st.session_state["t1_data"] = data   # share with Tab 2
         st.success(f"✅  Documents generated for **{data.get('name','client')}**")
         st.divider()
         safe = data.get("name","client").replace(" ","_")
@@ -664,84 +792,253 @@ with tab1:
 # ── TAB 2 ─────────────────────────────────────────────────────────────────────
 with tab2:
     st.markdown(
-        "Enter a client's profile and behaviours of concern — the tool will recommend "
-        "evidence-based PBS strategies and generate a **printable strategy report**."
+        "Upload a client's PBSP and your **strategy library** — the tool will match the most "
+        "appropriate strategies from your library to this client's behaviours and generate a "
+        "**printable strategy report**."
     )
     st.divider()
 
-    st.markdown("#### Client profile")
-    ca, cb = st.columns(2)
-    with ca:
-        sr_name = st.text_input("Client name *", key="sr_name", placeholder="e.g. Alex Thompson")
-        sr_age  = st.text_input("Age", key="sr_age", placeholder="e.g. 24")
-    with cb:
-        sr_diag  = st.text_input("Diagnosis / condition", key="sr_diag",
-                                  placeholder="e.g. Autism Spectrum Disorder, ABI")
-        sr_comms = st.selectbox("Communication level", key="sr_comms",
-                                 options=["Verbal","Limited verbal","Non-verbal","Uses AAC device"])
-    sr_other = st.text_area("Other relevant context (optional)", key="sr_other", height=80,
-                             placeholder="e.g. Routines are very important, history of trauma…")
+    # ── STEP 1: Client source ─────────────────────────────────────────────────
+    st.markdown("#### Step 1 — Client information")
+
+    source_opts = ["📄 Upload a PBSP (auto-extract)", "✏️ Enter manually"]
+    if "t1_data" in st.session_state:
+        source_opts.insert(0,
+            f"♻️ Use client from Tab 1 ({st.session_state['t1_data'].get('name','')})")
+    src = st.radio("Where is the client information coming from?",
+                   source_opts, key="sr_src", horizontal=True)
+
+    client_info    = None   # resolved below
+    valid_behs     = []     # resolved below
+    freetext_value = ""     # set only in free-text manual mode
+
+    src = src or source_opts[0]
+    if src.startswith("♻️"):
+        # ── reuse Tab 1 extraction ──
+        t1 = st.session_state["t1_data"]
+        client_info, valid_behs = pbsp_to_sr_format(t1)
+        st.success(f"✅  Using: **{t1.get('name','')}** — {t1.get('age_info','')}")
+        with st.expander("View extracted profile and behaviours"):
+            cols = st.columns(2)
+            with cols[0]:
+                st.markdown(f"**Name:** {t1.get('name','')}")
+                st.markdown(f"**Profile:** {t1.get('age_info','')}")
+                st.markdown("**About:**")
+                for a in t1.get("about",[]): st.markdown(f"- {a}")
+            with cols[1]:
+                st.markdown("**Behaviours of concern:**")
+                for b in t1.get("behaviours",[]): st.markdown(f"- **{b.get('label','')}:** " +
+                    ", ".join(b.get("descriptors",[])))
+                st.markdown("**Triggers:**")
+                for t in t1.get("triggers",[]): st.markdown(f"- {t}")
+
+    elif src.startswith("📄"):
+        # ── upload PBSP for Tab 2 ──
+        sr_pbsp_file = st.file_uploader("Upload client's PBSP (PDF or Word)",
+                                         type=["pdf","docx"], key="sr_pbsp_upload")
+        if sr_pbsp_file:
+            if st.button("Extract client information", type="secondary", key="sr_pbsp_extract"):
+                if not api_key:
+                    st.error("API key required — enter it in the sidebar.")
+                else:
+                    with st.spinner("Extracting from PBSP…"):
+                        fb = sr_pbsp_file.read()
+                        txt = extract_text_from_docx(fb) if sr_pbsp_file.name.lower().endswith(".docx") \
+                              else extract_text_from_pdf(fb)
+                        try:
+                            extracted = extract_client_data(txt, api_key)
+                            st.session_state["sr_pbsp_data"] = extracted
+                            st.success(f"✅  Extracted: {extracted.get('name','')}")
+                        except Exception as e:
+                            st.error(f"Extraction failed: {e}")
+
+        if "sr_pbsp_data" in st.session_state:
+            pd_ = st.session_state["sr_pbsp_data"]
+            client_info, valid_behs = pbsp_to_sr_format(pd_)
+            st.info(f"Using extracted data for **{pd_.get('name','')}** — "
+                    f"{len(valid_behs)} behaviour(s) found.")
+            with st.expander("View extracted behaviours"):
+                for b in pd_.get("behaviours",[]): st.markdown(
+                    f"- **{b.get('label','')}:** " + ", ".join(b.get("descriptors",[])))
+            if st.button("🗑 Clear extracted data", key="sr_pbsp_clear"):
+                del st.session_state["sr_pbsp_data"]; st.rerun()
+
+    else:
+        # ── manual entry ──
+        ca, cb = st.columns(2)
+        with ca:
+            sr_name = st.text_input("Client name *", key="sr_name",
+                                     placeholder="e.g. Alex Thompson")
+            sr_age  = st.text_input("Age", key="sr_age", placeholder="e.g. 24")
+        with cb:
+            sr_diag  = st.text_input("Diagnosis / condition", key="sr_diag",
+                                      placeholder="e.g. Autism Spectrum Disorder, ABI")
+            sr_comms = st.selectbox("Communication level", key="sr_comms",
+                                     options=["Verbal","Limited verbal","Non-verbal","Uses AAC device"])
+        sr_other = st.text_area("Other relevant context (optional)", key="sr_other", height=75,
+                                 placeholder="e.g. Routines are very important, history of trauma…")
+
+        st.markdown("**Behaviours of concern**")
+        entry_style = st.radio(
+            "How would you like to describe the behaviours?",
+            ["📝 Describe in your own words", "📋 Structured entry"],
+            key="sr_entry_style", horizontal=True,
+        )
+
+        if (entry_style or "").startswith("📝"):
+            # ── free-text mode ──
+            sr_freetext = st.text_area(
+                "Describe what you've observed — write naturally",
+                key="sr_freetext",
+                height=160,
+                placeholder=(
+                    "Write however feels natural — describe what you see, when it happens, "
+                    "and what seems to set it off. The tool will identify the behaviours, "
+                    "assign clinical labels, and develop strategies.\n\n"
+                    "e.g. 'Alex hits out at staff when demands are placed, especially during "
+                    "transitions. He also bangs his head on surfaces when he's frustrated or "
+                    "overwhelmed. Sometimes he shouts and swears when things don't go his way.'"
+                ),
+            )
+            freetext_value = (sr_freetext or "").strip()
+            # Use a sentinel so the generation block knows which path to take
+            valid_behs = [{"_freetext": True}] if freetext_value else []
+            if freetext_value:
+                client_info = {
+                    "name":      (sr_name or "").strip(),
+                    "age":       (sr_age  or "").strip() or "not specified",
+                    "diagnosis": (sr_diag or "").strip() or "not specified",
+                    "comms":     sr_comms or "Verbal",
+                    "other":     (sr_other or "").strip() or "none provided",
+                }
+
+        else:
+            # ── structured entry ──
+            freetext_value = ""
+            if "sr_n" not in st.session_state:
+                st.session_state.sr_n = 1
+
+            beh_raw = []
+            for i in range(st.session_state.sr_n):
+                with st.expander(f"Behaviour {i+1}", expanded=True):
+                    bn = st.text_input("Behaviour name / label", key=f"sr_bn_{i}",
+                                        placeholder="e.g. Physical aggression, Self-injurious behaviour")
+                    bd = st.text_area("Describe what it looks like", key=f"sr_bd_{i}", height=70,
+                                       placeholder="e.g. Hitting out, throwing objects — lasts 2–5 minutes")
+                    bt = st.text_area("Known triggers / when it tends to occur", key=f"sr_bt_{i}", height=70,
+                                       placeholder="e.g. When demands are placed, during transitions")
+                    beh_raw.append({"name": bn or "", "description": bd or "", "triggers": bt or ""})
+
+            caddbtn, crmbtn = st.columns(2)
+            with caddbtn:
+                if st.session_state.sr_n < 5 and st.button("＋ Add another behaviour", key="sr_add"):
+                    st.session_state.sr_n += 1; st.rerun()
+            with crmbtn:
+                if st.session_state.sr_n > 1 and st.button("− Remove last", key="sr_rm"):
+                    st.session_state.sr_n -= 1; st.rerun()
+
+            valid_behs = [b for b in beh_raw if b["name"].strip()]
+            if valid_behs:
+                client_info = {
+                    "name":      (sr_name or "").strip(),
+                    "age":       (sr_age  or "").strip() or "not specified",
+                    "diagnosis": (sr_diag or "").strip() or "not specified",
+                    "comms":     sr_comms or "Verbal",
+                    "other":     (sr_other or "").strip() or "none provided",
+                }
+
     st.divider()
 
-    st.markdown("#### Behaviours of concern")
-    if "sr_n" not in st.session_state:
-        st.session_state.sr_n = 1
+    # ── STEP 2: Strategy library ──────────────────────────────────────────────
+    st.markdown("#### Step 2 — Your strategy library")
+    st.markdown(
+        "Upload your organisation's approved strategy library or PBS manual. "
+        "The tool will select strategies **from your library** to match this client's behaviours."
+    )
 
-    behaviours_input = []
-    for i in range(st.session_state.sr_n):
-        with st.expander(f"Behaviour {i+1}", expanded=True):
-            bn = st.text_input("Behaviour name / label", key=f"sr_bn_{i}",
-                                placeholder="e.g. Physical aggression, Self-injurious behaviour")
-            bd = st.text_area("Describe what it looks like", key=f"sr_bd_{i}", height=75,
-                               placeholder="e.g. Hitting out, throwing objects — lasts 2–5 minutes")
-            bt = st.text_area("Known triggers / when it tends to occur", key=f"sr_bt_{i}", height=75,
-                               placeholder="e.g. When demands are placed, during transitions")
-            behaviours_input.append({"name": bn or "", "description": bd or "", "triggers": bt or ""})
+    sr_lib_file = st.file_uploader(
+        "Upload strategy library (PDF or Word)", type=["pdf","docx"], key="sr_lib_upload",
+        help="Strategies, clinical guidelines, PBS manuals, or any document containing your approved strategies",
+    )
+    if sr_lib_file:
+        fb = sr_lib_file.read()
+        lib_text = extract_text_from_docx(fb) if sr_lib_file.name.lower().endswith(".docx") \
+                   else extract_text_from_pdf(fb)
+        st.session_state["sr_lib_text"] = lib_text
+        st.session_state["sr_lib_name"] = sr_lib_file.name
 
-    ca2, cb2 = st.columns(2)
-    with ca2:
-        if st.session_state.sr_n < 5 and st.button("＋ Add another behaviour", key="sr_add"):
-            st.session_state.sr_n += 1; st.rerun()
-    with cb2:
-        if st.session_state.sr_n > 1 and st.button("− Remove last", key="sr_rm"):
-            st.session_state.sr_n -= 1; st.rerun()
+    if "sr_lib_text" in st.session_state:
+        word_count = len(st.session_state["sr_lib_text"].split())
+        st.success(
+            f"✅  Library loaded: **{st.session_state['sr_lib_name']}** "
+            f"({word_count:,} words) — strategies will be selected from this document."
+        )
+        if st.button("🗑 Clear library", key="sr_lib_clear"):
+            del st.session_state["sr_lib_text"]
+            del st.session_state["sr_lib_name"]
+            st.rerun()
+    else:
+        st.caption(
+            "No library uploaded — Claude will generate evidence-based strategies instead. "
+            "Upload your library to get strategies from your own clinical material."
+        )
 
     st.divider()
-    st.markdown("#### Report footer (optional)")
+
+    # ── STEP 3: Report footer ─────────────────────────────────────────────────
+    st.markdown("#### Step 3 — Report footer (optional)")
     cp, cc = st.columns(2)
     with cp: sr_prac    = st.text_input("Your name / title", key="sr_prac",
                                          placeholder="e.g. Janine Hogg — PBS Practitioner")
     with cc: sr_contact = st.text_input("Contact email", key="sr_contact",
                                          placeholder="e.g. janine@org.com.au")
+
     st.divider()
 
-    valid_behs  = [b for b in behaviours_input if b["name"].strip()]
-    can_go      = bool((sr_name or "").strip() and valid_behs and api_key)
-    rec_btn     = st.button("Generate strategy recommendations", type="primary",
-                             disabled=not can_go, key="sr_gen")
+    # ── GENERATE ──────────────────────────────────────────────────────────────
+    can_go  = bool(client_info and valid_behs and api_key)
+    rec_btn = st.button("Generate strategy recommendations", type="primary",
+                         disabled=not can_go, key="sr_gen")
 
     if not api_key:
-        st.info("Enter your Anthropic API key in the sidebar to use this tool.")
-    elif not sr_name.strip():
-        st.info("Enter a client name to get started.")
-    elif not valid_behs:
-        st.info("Add at least one behaviour of concern.")
+        st.info("Enter your Anthropic API key in the sidebar to enable this tool.")
+    elif not client_info or not valid_behs:
+        st.info("Complete Step 1 to provide client information before generating.")
 
     if rec_btn and can_go:
-        client_info = {
-            "name": (sr_name or "").strip(),
-            "age": (sr_age or "").strip() or "not specified",
-            "diagnosis": (sr_diag or "").strip() or "not specified",
-            "comms": sr_comms or "Verbal",
-            "other": (sr_other or "").strip() or "none provided",
-        }
-        with st.spinner("Generating strategy recommendations…"):
-            try:   result = recommend_strategies(client_info, valid_behs, api_key)
-            except Exception as e: st.error(f"Could not generate recommendations: {e}"); st.stop()
+        library_text  = st.session_state.get("sr_lib_text", None)
+        lib_label     = st.session_state.get("sr_lib_name", None)
+        client_label  = client_info.get("name", "client")
+        is_freetext   = bool(valid_behs and valid_behs[0].get("_freetext"))
 
-        st.success(f"✅  Recommendations generated for **{sr_name.strip()}**")
+        if is_freetext:
+            spinner_msg = (
+                f"Reading your description and matching strategies for {client_label}…"
+                if library_text else
+                f"Reading your description and developing strategies for {client_label}…"
+            )
+        else:
+            spinner_msg = (
+                f"Matching strategies from your library for {client_label}…"
+                if library_text else
+                f"Generating evidence-based strategies for {client_label}…"
+            )
+
+        with st.spinner(spinner_msg):
+            try:
+                if is_freetext:
+                    result = recommend_from_freetext(
+                        client_info, freetext_value, api_key, library_text)
+                else:
+                    result = recommend_strategies(client_info, valid_behs, api_key, library_text)
+            except Exception as e:
+                st.error(f"Could not generate recommendations: {e}"); st.stop()
+
+        source_note = f" (matched from **{lib_label}**)" if lib_label else ""
+        st.success(f"✅  Recommendations generated for **{client_label}**{source_note}")
         st.divider()
 
+        # ── On-screen results ──
         if result.get("client_summary"):
             st.info(f"**Clinical summary:** {result['client_summary']}")
 
@@ -760,7 +1057,6 @@ with tab2:
                     f"<strong style='color:#D4700A'>Likely function:</strong> "
                     f"<span style='color:#1A2B35'>{beh['likely_function']}</span></div>",
                     unsafe_allow_html=True)
-
             cl, cr = st.columns(2)
             with cl:
                 if beh.get("proactive"):
@@ -789,18 +1085,19 @@ with tab2:
         with st.spinner("Building PDF report…"):
             try:
                 report_buf = generate_strategy_report(
-                    result, sr_name.strip(),
-                    sr_prac.strip(), sr_contact.strip())
+                    result, client_label,
+                    (sr_prac or "").strip(), (sr_contact or "").strip())
             except Exception as e: st.error(f"PDF error: {e}"); st.stop()
 
         st.download_button(
             "📥 Download strategy report (PDF)", report_buf,
-            f"{sr_name.strip().replace(' ','_')}_Strategy_Report.pdf",
+            f"{client_label.replace(' ','_')}_Strategy_Report.pdf",
             "application/pdf", use_container_width=True)
 
     st.divider()
     st.caption(
-        "Recommendations are AI-generated based on PBS principles. "
-        "Always review and adapt strategies to the individual before implementing. "
-        "These recommendations complement but do not replace a formal Behaviour Support Plan."
+        "Recommendations are AI-generated. Always review before implementing. "
+        "When a strategy library is uploaded, Claude selects from that document — "
+        "verify that selected strategies are appropriate for this individual. "
+        "This tool complements but does not replace a formal Behaviour Support Plan."
     )
