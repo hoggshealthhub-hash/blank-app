@@ -182,13 +182,13 @@ RECORDING DATA:
 def extract_behaviour_recording(data_text: str, api_key: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=2000,
+        model="claude-opus-4-5", max_tokens=8000,
         messages=[{"role": "user", "content": BEHAVIOUR_RECORDING_PROMPT + data_text[:40000]}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    return json.loads(raw)
+    return _robust_json_parse(raw, context="response")
 
 
 def recording_to_sr_format(data: dict) -> tuple:
@@ -425,13 +425,13 @@ PBSP TEXT:
 def extract_client_data(pbsp_text: str, api_key: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=2000,
+        model="claude-opus-4-5", max_tokens=8000,
         messages=[{"role": "user", "content": EXTRACTION_PROMPT + pbsp_text[:40000]}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    return json.loads(raw)
+    return _robust_json_parse(raw, context="response")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -511,13 +511,13 @@ def recommend_strategies(client_info: dict, behaviours: list, api_key: str,
     )
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=3000,
+        model="claude-opus-4-5", max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    return json.loads(raw)
+    return _robust_json_parse(raw, context="response")
 
 
 def pbsp_to_sr_format(data: dict) -> tuple:
@@ -619,13 +619,13 @@ def recommend_from_freetext(client_info: dict, freetext: str, api_key: str,
     )
     client = anthropic.Anthropic(api_key=api_key)
     msg = client.messages.create(
-        model="claude-opus-4-5", max_tokens=3000,
+        model="claude-opus-4-5", max_tokens=8000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = msg.content[0].text.strip()
     if raw.startswith("```"): raw = "\n".join(raw.split("\n")[1:])
     if raw.endswith("```"):   raw = "\n".join(raw.split("\n")[:-1])
-    return json.loads(raw)
+    return _robust_json_parse(raw, context="response")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
